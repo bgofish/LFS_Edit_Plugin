@@ -161,7 +161,7 @@ class TransformPanel(lf.ui.Panel):
     def __init__(self):
         self._status         = ""
         self._node_name      = ""
-        self._merge_name     = "merged"
+        self._merge_name     = "Merged"
         self._folder_name    = "Group"
         self._tx = self._ty = self._tz = 0.0
         self._rx = self._ry = self._rz = 0.0
