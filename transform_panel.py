@@ -80,6 +80,32 @@ def _quat_mul_batch(q1, q2):
                      w1*y2-x1*z2+y1*w2+z1*x2, w1*z2+x1*y2-y1*x2+z1*w2], axis=1)
 
 
+def _merge_visible(name: str) -> str:
+    """Merge all visible splat nodes into a single node called *name*.
+
+    Mirrors the logic from SORPanel._merge_visible in the SOR plugin.
+    Returns an empty string on success or an error message on failure.
+    """
+    scene = lf.get_scene()
+    if scene is None:
+        return "No scene loaded."
+    nodes = [n for n in scene.get_visible_nodes() if n.splat_data() is not None]
+    if not nodes:
+        return "No visible splat nodes to merge."
+    name = name.strip() or "merged"
+    try:
+        group_id = scene.add_group(name)
+        for n in nodes:
+            scene.reparent(n.id, group_id)
+        scene.merge_group(name)
+        scene.notify_changed()
+        return ""
+    except Exception as e:
+        import traceback
+        lf.log.error(f"EDIT merge error: {traceback.format_exc()}")
+        return str(e)
+
+
 def _bake(node_name):
     s    = lf.get_scene()
     node = s.get_node(node_name)
@@ -135,6 +161,8 @@ class TransformPanel(lf.ui.Panel):
     def __init__(self):
         self._status         = ""
         self._node_name      = ""
+        self._merge_name     = "merged"
+        self._folder_name    = "Group"
         self._tx = self._ty = self._tz = 0.0
         self._rx = self._ry = self._rz = 0.0
         self._sx = self._sy = self._sz = 1.0
@@ -316,6 +344,48 @@ class TransformPanel(lf.ui.Panel):
             _request_redraw()
         ui.text_disabled("Permanently writes transform into Gaussian data.")
         ui.text_disabled("Save a backup before baking.")
+
+        ui.separator()
+
+        # ── Merge Visible Nodes ───────────────────────────────────────────────
+        ui.heading("Merge Visible Nodes")
+        ui.push_item_width(120)
+        _, self._merge_name = ui.input_text("##merge_name", self._merge_name)
+        ui.pop_item_width()
+        ui.same_line()
+        if ui.button_styled("Merge Visible##mv", "primary"):
+            err = _merge_visible(self._merge_name)
+            if err:
+                self._status = f"Merge failed: {err}"
+            else:
+                name = self._merge_name.strip() or "merged"
+                self._status = f"Merged visible nodes into '{name}'."
+                self._sync_from_scene()
+            _request_redraw()
+        ui.text_disabled("Combines all visible splat nodes into one named node.")
+
+        ui.separator()
+
+        # ── New Group Folder ──────────────────────────────────────────────────
+        ui.heading("New Group Folder")
+        ui.push_item_width(120)
+        _, self._folder_name = ui.input_text("##folder_name", self._folder_name)
+        ui.pop_item_width()
+        ui.same_line()
+        if ui.button("Create##cf"):
+            name = self._folder_name.strip() or "Group"
+            try:
+                scene = lf.get_scene()
+                if scene is None:
+                    self._status = "No scene loaded."
+                else:
+                    scene.add_group(name)
+                    scene.notify_changed()
+                    self._status = f"Created group '{name}'."
+            except Exception as e:
+                self._status = f"Create group failed: {e}"
+            _request_redraw()
+        ui.text_disabled("Adds an empty folder node to the scene hierarchy.")
 
         ui.separator()
         if self._status:
