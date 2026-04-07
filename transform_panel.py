@@ -161,7 +161,7 @@ class TransformPanel(lf.ui.Panel):
     def __init__(self):
         self._status         = ""
         self._node_name      = ""
-        self._merge_name     = "Merged"
+        self._merge_name     = "merged"
         self._folder_name    = "Group"
         self._tx = self._ty = self._tz = 0.0
         self._rx = self._ry = self._rz = 0.0
@@ -170,6 +170,9 @@ class TransformPanel(lf.ui.Panel):
         self._live           = True
         self._last_mat       = None
         self._gen            = 0  # bumped on sync to flush input_float buffers
+        # Per-field display values for the input boxes — only updated on
+        # sync/grab so that typing a decimal is never interrupted by the slider.
+        self._input_buf: dict[str, float] = {}
 
     @classmethod
     def poll(cls, context) -> bool:
@@ -190,6 +193,7 @@ class TransformPanel(lf.ui.Panel):
              self._sx, self._sy, self._sz) = _decompose_mat(node.world_transform)
             self._last_mat = None
             self._gen += 1
+            self._input_buf.clear()
             self._status = f"Synced: {name}"
             lf.log.info(f"EDIT synced: t=({self._tx:.3f},{self._ty:.3f},{self._tz:.3f}) "
                         f"r=({self._rx:.1f},{self._ry:.1f},{self._rz:.1f}) "
@@ -214,8 +218,9 @@ class TransformPanel(lf.ui.Panel):
         """One row: label | drag slider | input box, all on the same line.
 
         Slider fills all space except _INPUT_W px reserved for the input box.
-        Stable widget IDs (with _gen suffix flushed only on sync) let ImGui
-        retain keyboard focus across frames but reinit after a grab/sync.
+        The input box has its own buffer (_input_buf) that is only refreshed on
+        sync/grab (when _gen bumps), so typing a decimal is never interrupted
+        by slider movement.
         """
         ui.push_item_width(14)
         ui.label(label)
@@ -229,10 +234,17 @@ class TransformPanel(lf.ui.Panel):
 
         ui.same_line()
 
-        # Input box — ID includes _gen so it reinits after a sync/grab.
+        # Input box — uses its own buffer so mid-decimal typing isn't clobbered
+        # by slider updates.  Buffer is only re-seeded when _gen changes (i.e.
+        # after a Grab or Sync), via a fresh widget ID.
+        buf_key = f"{uid}_{self._gen}"
+        if buf_key not in self._input_buf:
+            self._input_buf[buf_key] = value
         ui.push_item_width(_INPUT_W)
-        ch_i, v_i = ui.input_float(f"##{uid}_i{self._gen}", v_d if ch_d else value, step, step * 10)
+        ch_i, v_i = ui.input_float(f"##{uid}_i{self._gen}", self._input_buf[buf_key], 0.0, 0.0)
         ui.pop_item_width()
+        if ch_i:
+            self._input_buf[buf_key] = float(v_i)
 
         if ch_i:
             return True, float(v_i)
@@ -313,6 +325,7 @@ class TransformPanel(lf.ui.Panel):
         if changed_any and self._live:
             self._apply_to_scene()
             self._gen += 1
+            self._input_buf.clear()
 
         ui.separator()
 
@@ -325,6 +338,8 @@ class TransformPanel(lf.ui.Panel):
             self._tx = self._ty = self._tz = 0.0
             self._rx = self._ry = self._rz = 0.0
             self._sx = self._sy = self._sz = 1.0
+            self._gen += 1
+            self._input_buf.clear()
             self._apply_to_scene()
             self._status = "Reset to identity."
             _request_redraw()
@@ -348,7 +363,7 @@ class TransformPanel(lf.ui.Panel):
         ui.separator()
 
         # ── Merge Visible Nodes ───────────────────────────────────────────────
-        ui.heading("Merge Visible Nodes")
+        ui.label("Merge Visible Nodes")
         ui.push_item_width(120)
         _, self._merge_name = ui.input_text("##merge_name", self._merge_name)
         ui.pop_item_width()
@@ -367,7 +382,7 @@ class TransformPanel(lf.ui.Panel):
         ui.separator()
 
         # ── New Group Folder ──────────────────────────────────────────────────
-        ui.heading("New Group Folder")
+        ui.label("New Group Folder")
         ui.push_item_width(120)
         _, self._folder_name = ui.input_text("##folder_name", self._folder_name)
         ui.pop_item_width()

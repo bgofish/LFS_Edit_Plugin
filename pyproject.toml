@@ -1,6 +1,6 @@
 [project]
 name = "EDIT"
-version = "0.1.0"
+version = "0.1.1"
 description = "Transform editor — translate, rotate, scale and bake Gaussian splat nodes"
 authors = [{name = "Brian Davis (bb6)"}]
 dependencies = []
