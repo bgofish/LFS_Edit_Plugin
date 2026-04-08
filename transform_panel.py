@@ -214,6 +214,17 @@ class TransformPanel(lf.ui.Panel):
                    lambda: self._live,
                    self._set_live)
 
+        # Slider limit attributes (read-only — driven from settings.json via _load_settings)
+        model.bind_func("t_min",  lambda: str(self._t_min))
+        model.bind_func("t_max",  lambda: str(self._t_max))
+        model.bind_func("t_step", lambda: str(self._t_step))
+        model.bind_func("r_min",  lambda: str(self._r_min))
+        model.bind_func("r_max",  lambda: str(self._r_max))
+        model.bind_func("r_step", lambda: str(self._r_step))
+        model.bind_func("s_min",  lambda: str(self._s_min))
+        model.bind_func("s_max",  lambda: str(self._s_max))
+        model.bind_func("s_step", lambda: str(self._s_step))
+
         # Translation
         model.bind("tx_str",
                    lambda: f"{self._tx:.3f}",
@@ -688,6 +699,9 @@ class TransformPanel(lf.ui.Panel):
                     "rx_str", "ry_str", "rz_str",
                     "sx_str", "sy_str", "sz_str",
                     "live", "uniform_scale",
+                    "t_min", "t_max", "t_step",
+                    "r_min", "r_max", "r_step",
+                    "s_min", "s_max", "s_step",
                     "merge_name", "folder_name", "move_target",
                     "status_text", "status_class")
 
