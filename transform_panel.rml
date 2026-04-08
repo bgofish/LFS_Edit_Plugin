@@ -117,7 +117,7 @@
     <!-- Apply / Reset -->
     <div class="btn-row">
       <button class="btn" data-event-click="do_apply"
-              title="Push the current slider values to the scene as a node transform. Only needed when Live mode is off.">Apply</button>
+              title="Push the current slider values to the scene as a node transform: Only needed when Live mode is off.">Apply</button>
       <button class="btn" data-event-click="do_reset"
               title="Reset all translation, rotation, and scale sliders to identity (T=0, R=0°, S=1) and apply immediately.">Reset</button>
     </div>
