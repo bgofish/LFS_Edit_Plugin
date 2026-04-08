@@ -180,6 +180,18 @@ class TransformPanel(lf.ui.Panel):
         self._live           = True
         self._status         = ""
         self._last_node_name = None   # dirty-detection
+
+        # Slider limits — defaults; overridden by settings.json if present
+        self._t_min  = -50.0
+        self._t_max  =  50.0
+        self._r_min  = -180.0
+        self._r_max  =  180.0
+        self._s_min  =  0.01
+        self._s_max  =  5.0
+        self._t_step =  0.1
+        self._r_step =  1.0
+        self._s_step =  0.01
+
         self._load_settings()
 
     @classmethod
@@ -205,24 +217,24 @@ class TransformPanel(lf.ui.Panel):
         # Translation
         model.bind("tx_str",
                    lambda: f"{self._tx:.3f}",
-                   lambda v: self._set_trs("tx", v, -50.0, 50.0))
+                   lambda v: self._set_trs("tx", v, self._t_min, self._t_max))
         model.bind("ty_str",
                    lambda: f"{self._ty:.3f}",
-                   lambda v: self._set_trs("ty", v, -50.0, 50.0))
+                   lambda v: self._set_trs("ty", v, self._t_min, self._t_max))
         model.bind("tz_str",
                    lambda: f"{self._tz:.3f}",
-                   lambda v: self._set_trs("tz", v, -50.0, 50.0))
+                   lambda v: self._set_trs("tz", v, self._t_min, self._t_max))
 
         # Rotation
         model.bind("rx_str",
                    lambda: f"{self._rx:.1f}",
-                   lambda v: self._set_trs("rx", v, -180.0, 180.0))
+                   lambda v: self._set_trs("rx", v, self._r_min, self._r_max))
         model.bind("ry_str",
                    lambda: f"{self._ry:.1f}",
-                   lambda v: self._set_trs("ry", v, -180.0, 180.0))
+                   lambda v: self._set_trs("ry", v, self._r_min, self._r_max))
         model.bind("rz_str",
                    lambda: f"{self._rz:.1f}",
-                   lambda v: self._set_trs("rz", v, -180.0, 180.0))
+                   lambda v: self._set_trs("rz", v, self._r_min, self._r_max))
 
         # Scale
         model.bind("uniform_scale",
@@ -230,13 +242,13 @@ class TransformPanel(lf.ui.Panel):
                    self._set_uniform_scale)
         model.bind("sx_str",
                    lambda: f"{self._sx:.3f}",
-                   lambda v: self._set_trs("sx", v, 1e-6, 5.0))
+                   lambda v: self._set_trs("sx", v, self._s_min, self._s_max))
         model.bind("sy_str",
                    lambda: f"{self._sy:.3f}",
-                   lambda v: self._set_trs("sy", v, 1e-6, 5.0))
+                   lambda v: self._set_trs("sy", v, self._s_min, self._s_max))
         model.bind("sz_str",
                    lambda: f"{self._sz:.3f}",
-                   lambda v: self._set_trs("sz", v, 1e-6, 5.0))
+                   lambda v: self._set_trs("sz", v, self._s_min, self._s_max))
 
         # Text inputs
         model.bind("merge_name",
@@ -377,12 +389,18 @@ class TransformPanel(lf.ui.Panel):
         field     = str(args[0])
         direction = int(args[1])
 
-        steps  = dict(tx=_T_STEP, ty=_T_STEP, tz=_T_STEP,
-                      rx=_R_STEP, ry=_R_STEP, rz=_R_STEP,
-                      sx=_S_STEP, sy=_S_STEP, sz=_S_STEP)
-        ranges = dict(tx=(-50.0, 50.0), ty=(-50.0, 50.0), tz=(-50.0, 50.0),
-                      rx=(-180.0, 180.0), ry=(-180.0, 180.0), rz=(-180.0, 180.0),
-                      sx=(1e-6, 5.0),    sy=(1e-6, 5.0),    sz=(1e-6, 5.0))
+        steps  = dict(tx=self._t_step, ty=self._t_step, tz=self._t_step,
+                      rx=self._r_step, ry=self._r_step, rz=self._r_step,
+                      sx=self._s_step, sy=self._s_step, sz=self._s_step)
+        ranges = dict(tx=(self._t_min, self._t_max),
+                      ty=(self._t_min, self._t_max),
+                      tz=(self._t_min, self._t_max),
+                      rx=(self._r_min, self._r_max),
+                      ry=(self._r_min, self._r_max),
+                      rz=(self._r_min, self._r_max),
+                      sx=(self._s_min, self._s_max),
+                      sy=(self._s_min, self._s_max),
+                      sz=(self._s_min, self._s_max))
         if field not in steps:
             return
 
@@ -591,11 +609,27 @@ class TransformPanel(lf.ui.Panel):
             self._sx            = float(t.get("sx",            self._sx))
             self._sy            = float(t.get("sy",            self._sy))
             self._sz            = float(t.get("sz",            self._sz))
-            self._uniform_scale = bool(t.get("uniform_scale",  self._uniform_scale))
-            self._live          = bool(t.get("live",           self._live))
+            # Booleans: use explicit `is True` comparison to correctly read
+            # JSON false (Python False) rather than truthy/falsy coercion.
+            us = t.get("uniform_scale", self._uniform_scale)
+            self._uniform_scale = us if isinstance(us, bool) else bool(us)
+            lv = t.get("live", self._live)
+            self._live          = lv if isinstance(lv, bool) else bool(lv)
             self._merge_name    = str(t.get("merge_name",      self._merge_name))
             self._folder_name   = str(t.get("folder_name",     self._folder_name))
             self._move_target   = str(t.get("move_target",     self._move_target))
+
+            # Slider limits & steps from settings.json
+            lim = data.get("limits", {})
+            self._t_min  = float(lim.get("translation_min",  self._t_min))
+            self._t_max  = float(lim.get("translation_max",  self._t_max))
+            self._r_min  = float(lim.get("rotation_min",     self._r_min))
+            self._r_max  = float(lim.get("rotation_max",     self._r_max))
+            self._s_min  = float(lim.get("scale_min",        self._s_min))
+            self._s_max  = float(lim.get("scale_max",        self._s_max))
+            self._t_step = float(lim.get("translation_step", self._t_step))
+            self._r_step = float(lim.get("rotation_step",    self._r_step))
+            self._s_step = float(lim.get("scale_step",       self._s_step))
         except FileNotFoundError:
             pass  # first run — file will be created on first save
         except Exception as e:
@@ -624,6 +658,17 @@ class TransformPanel(lf.ui.Panel):
                 "merge_name":    self._merge_name,
                 "folder_name":   self._folder_name,
                 "move_target":   self._move_target,
+            }
+            data["limits"] = {
+                "translation_min":  self._t_min,
+                "translation_max":  self._t_max,
+                "rotation_min":     self._r_min,
+                "rotation_max":     self._r_max,
+                "scale_min":        self._s_min,
+                "scale_max":        self._s_max,
+                "translation_step": self._t_step,
+                "rotation_step":    self._r_step,
+                "scale_step":       self._s_step,
             }
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception as e:
