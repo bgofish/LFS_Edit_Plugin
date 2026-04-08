@@ -163,6 +163,7 @@ class TransformPanel(lf.ui.Panel):
         self._node_name      = ""
         self._merge_name     = "merged"
         self._folder_name    = "Group"
+        self._move_target    = "Selection"
         self._tx = self._ty = self._tz = 0.0
         self._rx = self._ry = self._rz = 0.0
         self._sx = self._sy = self._sz = 1.0
@@ -177,6 +178,81 @@ class TransformPanel(lf.ui.Panel):
     @classmethod
     def poll(cls, context) -> bool:
         return True
+
+    def _move_selected_splats(self, source_name: str, target_name: str) -> str:
+        """Move splats by manually calculating the node's offset in the global mask."""
+        try:
+            scene = lf.get_scene()
+            global_mask = scene.selection_mask
+            if global_mask is None or not lf.has_selection():
+                return "Nothing selected."
+
+            # 1. CALCULATE TRUE OFFSET
+            # The global selection mask is built from VISIBLE splat nodes only,
+            # so we must walk the same filtered list to get the correct offset.
+            # Using scene.get_nodes() (all nodes, including hidden) was wrong —
+            # hidden nodes don't contribute to the mask but were shifting start_idx.
+            visible_splat_nodes = [n for n in scene.get_visible_nodes() if n.splat_data() is not None]
+            start_idx = 0
+            found_node = None
+
+            for n in visible_splat_nodes:
+                if n.name == source_name:
+                    found_node = n
+                    break
+                start_idx += n.splat_data().num_points
+
+            if not found_node:
+                return f"Source node '{source_name}' not found (or not visible)."
+
+            # 2. CAPTURE LOCAL MASK
+            num_points = found_node.splat_data().num_points
+            local_mask_tensor = global_mask[start_idx : start_idx + num_points]
+            # Cast to bool — ~operator on uint8 gives bitwise NOT (255), not logical NOT
+            mask_np = local_mask_tensor.cpu().numpy().astype(bool)
+
+            selected_count = int(mask_np.sum())
+            lf.log.info(f"EDIT move: source='{source_name}' total={num_points} selected={selected_count} start_idx={start_idx}")
+            if selected_count == 0:
+                return "No splats selected in this node."
+
+            # 3. DETACH UI
+            scene.clear_selection()
+
+            # 4. PERFORM THE MOVE
+            # soft_delete(mask) REMOVES splats where mask is True.
+            # So to keep only the selection in the duplicate we delete the inverse.
+            delete_from_dup    = lf.Tensor.from_numpy(~mask_np).cuda()  # delete non-selected
+            delete_from_source = lf.Tensor.from_numpy(mask_np).cuda()   # delete selected
+
+            temp_name = scene.duplicate_node(source_name)
+            temp_node = scene.get_node(temp_name)
+            temp_sd = temp_node.splat_data()
+            temp_sd.soft_delete(delete_from_dup)
+            temp_sd.apply_deleted()
+
+            lf.log.info(f"EDIT move: '{temp_name}' has {temp_node.splat_data().num_points} splats after strip")
+
+            target_node = scene.get_node(target_name)
+            if target_node is not None:
+                scene.merge_nodes([target_name, temp_name], target_name)
+            else:
+                lf.rename_node(temp_name, target_name)
+
+            source_sd = found_node.splat_data()
+            source_sd.soft_delete(delete_from_source)
+            source_sd.apply_deleted()
+
+            # 5. REFRESH
+            scene.notify_changed()
+            return ""  # Success
+            
+        except Exception as e:
+            import traceback
+            lf.log.error(f"EDIT move error: {traceback.format_exc()}")
+            return str(e)
+
+
 
     def _sync_from_scene(self):
         try:
@@ -402,6 +478,29 @@ class TransformPanel(lf.ui.Panel):
             _request_redraw()
         ui.text_disabled("Adds an empty folder node to the scene hierarchy.")
 
+        # ── Move Selected Splats ──────────────────────────────────────────────
+        ui.label("Move Selected Splats")
+        ui.push_item_width(120)
+        _, self._move_target = ui.input_text("##move_target", self._move_target)
+        ui.pop_item_width()
+        ui.same_line()
+        if ui.button_styled("Move##mv_splats", "primary"):
+            target_name = self._move_target.strip()
+            if not target_name:
+                self._status = "Enter a target node name first."
+            else:
+                # Call the method correctly with both arguments
+                err = self._move_selected_splats(self._node_name, target_name)
+                if err:
+                    self._status = f"Move failed: {err}"
+                else:
+                    self._status = f"Moved selected splats → '{target_name}'."
+                    self._move_target = "Selection" # Reset to default
+                    self._sync_from_scene()
+            _request_redraw()
+        ui.text_disabled("Target node name to move selected splats into.")
         ui.separator()
+
+
         if self._status:
             ui.label(self._status)
