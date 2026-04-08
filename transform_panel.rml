@@ -22,8 +22,10 @@
       <button class="btn" data-event-click="do_grab"
               title="Re-reads the selected node's current world transform from the scene and loads it into the sliders. Use this after moving a node externally or if the sliders drift out of sync.">Grab from viewport</button>
       <input type="checkbox" data-value="live" data-attrif-checked="live"
-             title="When enabled, every slider or input change is applied to the scene immediately as you drag. Disable to stage multiple changes and apply them all at once with the Apply button." />
-      <span title="When enabled, every slider or input change is applied to the scene immediately as you drag. Disable to stage multiple changes and apply them all at once with the Apply button.">Live</span>
+             data-attr-title="tip_live" />
+      <span data-attr-title="tip_live">Live</span>
+      <button class="btn" data-event-click="do_reload_settings"
+              title="Reload settings.json from disk — updates slider limits, step sizes, and tooltips without restarting.">Read Settings</button>
     </div>
 
     <div class="separator"></div>
@@ -31,23 +33,23 @@
     <!-- Translation -->
     <span class="section-label" style="color: #4A90D9;">Translation</span>
 
-    <div class="setting-row" title="Translate the node along the world X axis.  Range ±50.">
+    <div class="setting-row" data-attr-title="tip_tx">
       <span class="prop-label">X</span>
-      <input type="range" class="setting-slider" data-value="tx_str" data-attr-min="t_min" data-attr-max="t_max" data-attr-step="t_step" />
+      <input type="range" class="setting-slider" data-value="tx_str" data-attr-min="t_min" data-attr-max="t_max" data-attr-step="t_step" data-attr-title="tip_tx" />
       <input type="text"  class="number-input"   data-value="tx_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('tx', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('tx',  1)">+</button>
     </div>
-    <div class="setting-row" title="Translate the node along the world Y axis.  Range ±50.">
+    <div class="setting-row" data-attr-title="tip_ty">
       <span class="prop-label">Y</span>
-      <input type="range" class="setting-slider" data-value="ty_str" data-attr-min="t_min" data-attr-max="t_max" data-attr-step="t_step" />
+      <input type="range" class="setting-slider" data-value="ty_str" data-attr-min="t_min" data-attr-max="t_max" data-attr-step="t_step" data-attr-title="tip_ty" />
       <input type="text"  class="number-input"   data-value="ty_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('ty', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('ty',  1)">+</button>
     </div>
-    <div class="setting-row" title="Translate the node along the world Z axis.  Range ±50.">
+    <div class="setting-row" data-attr-title="tip_tz">
       <span class="prop-label">Z</span>
-      <input type="range" class="setting-slider" data-value="tz_str" data-attr-min="t_min" data-attr-max="t_max" data-attr-step="t_step" />
+      <input type="range" class="setting-slider" data-value="tz_str" data-attr-min="t_min" data-attr-max="t_max" data-attr-step="t_step" data-attr-title="tip_tz" />
       <input type="text"  class="number-input"   data-value="tz_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('tz', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('tz',  1)">+</button>
@@ -58,23 +60,23 @@
     <!-- Rotation -->
     <span class="section-label" style="color: #4A90D9;">Rotation (°)</span>
 
-    <div class="setting-row" title="Rotate the node around the world X axis (pitch).  Range ±180°.">
+    <div class="setting-row" data-attr-title="tip_rx">
       <span class="prop-label">X</span>
-      <input type="range" class="setting-slider" data-value="rx_str" data-attr-min="r_min" data-attr-max="r_max" data-attr-step="r_step" />
+      <input type="range" class="setting-slider" data-value="rx_str" data-attr-min="r_min" data-attr-max="r_max" data-attr-step="r_step" data-attr-title="tip_rx" />
       <input type="text"  class="number-input"   data-value="rx_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('rx', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('rx',  1)">+</button>
     </div>
-    <div class="setting-row" title="Rotate the node around the world Y axis (yaw).  Range ±180°.">
+    <div class="setting-row" data-attr-title="tip_ry">
       <span class="prop-label">Y</span>
-      <input type="range" class="setting-slider" data-value="ry_str" data-attr-min="r_min" data-attr-max="r_max" data-attr-step="r_step" />
+      <input type="range" class="setting-slider" data-value="ry_str" data-attr-min="r_min" data-attr-max="r_max" data-attr-step="r_step" data-attr-title="tip_ry" />
       <input type="text"  class="number-input"   data-value="ry_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('ry', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('ry',  1)">+</button>
     </div>
-    <div class="setting-row" title="Rotate the node around the world Z axis (roll).  Range ±180°.">
+    <div class="setting-row" data-attr-title="tip_rz">
       <span class="prop-label">Z</span>
-      <input type="range" class="setting-slider" data-value="rz_str" data-attr-min="r_min" data-attr-max="r_max" data-attr-step="r_step" />
+      <input type="range" class="setting-slider" data-value="rz_str" data-attr-min="r_min" data-attr-max="r_max" data-attr-step="r_step" data-attr-title="tip_rz" />
       <input type="text"  class="number-input"   data-value="rz_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('rz', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('rz',  1)">+</button>
@@ -85,28 +87,28 @@
     <!-- Scale -->
     <span class="section-label" style="color: #4A90D9;">Scale</span>
 
-    <div class="setting-row" title="Lock X / Y / Z scale together so dragging any axis scales all three uniformly. Uncheck to scale each axis independently.">
+    <div class="setting-row" data-attr-title="tip_uniform">
       <span class="prop-label">Uniform</span>
       <input type="checkbox" data-value="uniform_scale" data-attrif-checked="uniform_scale"
-             title="Lock X / Y / Z scale together so dragging any axis scales all three uniformly. Uncheck to scale each axis independently." />
+             data-attr-title="tip_uniform" />
     </div>
-    <div class="setting-row" title="Scale the node along the X axis.  Range 0.01 – 5.">
+    <div class="setting-row" data-attr-title="tip_sx">
       <span class="prop-label">X</span>
-      <input type="range" class="setting-slider" data-value="sx_str" data-attr-min="s_min" data-attr-max="s_max" data-attr-step="s_step" />
+      <input type="range" class="setting-slider" data-value="sx_str" data-attr-min="s_min" data-attr-max="s_max" data-attr-step="s_step" data-attr-title="tip_sx" />
       <input type="text"  class="number-input"   data-value="sx_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('sx', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('sx',  1)">+</button>
     </div>
-    <div class="setting-row" title="Scale the node along the Y axis.  Range 0.01 – 5.">
+    <div class="setting-row" data-attr-title="tip_sy">
       <span class="prop-label">Y</span>
-      <input type="range" class="setting-slider" data-value="sy_str" data-attr-min="s_min" data-attr-max="s_max" data-attr-step="s_step" />
+      <input type="range" class="setting-slider" data-value="sy_str" data-attr-min="s_min" data-attr-max="s_max" data-attr-step="s_step" data-attr-title="tip_sy" />
       <input type="text"  class="number-input"   data-value="sy_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('sy', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('sy',  1)">+</button>
     </div>
-    <div class="setting-row" title="Scale the node along the Z axis.  Range 0.01 – 5.">
+    <div class="setting-row" data-attr-title="tip_sz">
       <span class="prop-label">Z</span>
-      <input type="range" class="setting-slider" data-value="sz_str" data-attr-min="s_min" data-attr-max="s_max" data-attr-step="s_step" />
+      <input type="range" class="setting-slider" data-value="sz_str" data-attr-min="s_min" data-attr-max="s_max" data-attr-step="s_step" data-attr-title="tip_sz" />
       <input type="text"  class="number-input"   data-value="sz_str" />
       <button class="num-step-btn" data-event-mousedown="num_step('sz', -1)">-</button>
       <button class="num-step-btn" data-event-mousedown="num_step('sz',  1)">+</button>
@@ -167,7 +169,7 @@
       <button class="btn" data-event-click="do_move"
               title="Move the currently selected splats from the active node into the named target node. The source node keeps the unselected splats. Make a selection in the viewport first.">Move</button>
     </div>
-    <span class="text-muted">Target node name to move selected splats into:</span>
+    <span class="text-muted">Target node name to move selected splats into.</span>
 
     <div class="separator"></div>
 

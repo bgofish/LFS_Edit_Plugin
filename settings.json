@@ -1,7 +1,7 @@
 {
   "limits": {
-    "translation_min": -500.0,
-    "translation_max": 500.0,
+    "translation_min": -50.0,
+    "translation_max": 50.0,
     "rotation_min": -180.0,
     "rotation_max": 180.0,
     "scale_min": 0.01,
@@ -11,15 +11,15 @@
     "scale_step": 0.01
   },
   "transform": {
-    "tx": 0.0,
-    "ty": 0.0,
-    "tz": -5.6,
+    "tx": 0.5,
+    "ty": 0.5,
+    "tz": 0.5,
     "rx": 0.0,
-    "ry": 0.0,
+    "ry": -0.0,
     "rz": 0.0,
-    "sx": 1.0,
-    "sy": 1.0,
-    "sz": 1.0,
+    "sx": 0.01,
+    "sy": 0.01,
+    "sz": 0.01,
     "uniform_scale": true,
     "live": true,
     "merge_name": "merged",

@@ -225,6 +225,19 @@ class TransformPanel(lf.ui.Panel):
         model.bind_func("s_max",  lambda: str(self._s_max))
         model.bind_func("s_step", lambda: str(self._s_step))
 
+        # Tooltip strings — built from loaded limits so they stay in sync with settings.json
+        model.bind_func("tip_live",    lambda: "When enabled, every change is applied immediately. Disable to batch changes and apply with the Apply button.")
+        model.bind_func("tip_uniform", lambda: "Lock X/Y/Z scale together so any axis scales all three. Uncheck to scale each axis independently.")
+        model.bind_func("tip_tx",      lambda: f"Translate the node along the world X axis.  Range {self._t_min} \u2013 {self._t_max}.")
+        model.bind_func("tip_ty",      lambda: f"Translate the node along the world Y axis.  Range {self._t_min} \u2013 {self._t_max}.")
+        model.bind_func("tip_tz",      lambda: f"Translate the node along the world Z axis.  Range {self._t_min} \u2013 {self._t_max}.")
+        model.bind_func("tip_rx",      lambda: f"Rotate the node around the world X axis (pitch).  Range {self._r_min}\u00b0 \u2013 {self._r_max}\u00b0.")
+        model.bind_func("tip_ry",      lambda: f"Rotate the node around the world Y axis (yaw).    Range {self._r_min}\u00b0 \u2013 {self._r_max}\u00b0.")
+        model.bind_func("tip_rz",      lambda: f"Rotate the node around the world Z axis (roll).   Range {self._r_min}\u00b0 \u2013 {self._r_max}\u00b0.")
+        model.bind_func("tip_sx",      lambda: f"Scale the node along the X axis.  Range {self._s_min} \u2013 {self._s_max}.")
+        model.bind_func("tip_sy",      lambda: f"Scale the node along the Y axis.  Range {self._s_min} \u2013 {self._s_max}.")
+        model.bind_func("tip_sz",      lambda: f"Scale the node along the Z axis.  Range {self._s_min} \u2013 {self._s_max}.")
+
         # Translation
         model.bind("tx_str",
                    lambda: f"{self._tx:.3f}",
@@ -277,15 +290,16 @@ class TransformPanel(lf.ui.Panel):
         model.bind_func("status_class", self._status_class)
 
         # Events
-        model.bind_event("do_refresh",       self._on_refresh)
-        model.bind_event("do_grab",          self._on_grab)
-        model.bind_event("do_apply",         self._on_apply)
-        model.bind_event("do_reset",         self._on_reset)
-        model.bind_event("do_bake",          self._on_bake)
-        model.bind_event("do_merge",         self._on_merge)
-        model.bind_event("do_create_folder", self._on_create_folder)
-        model.bind_event("do_move",          self._on_move)
-        model.bind_event("num_step",         self._on_num_step)
+        model.bind_event("do_refresh",         self._on_refresh)
+        model.bind_event("do_grab",            self._on_grab)
+        model.bind_event("do_apply",           self._on_apply)
+        model.bind_event("do_reset",           self._on_reset)
+        model.bind_event("do_bake",            self._on_bake)
+        model.bind_event("do_merge",           self._on_merge)
+        model.bind_event("do_create_folder",   self._on_create_folder)
+        model.bind_event("do_move",            self._on_move)
+        model.bind_event("num_step",           self._on_num_step)
+        model.bind_event("do_reload_settings", self._on_reload_settings)
 
         self._handle = model.get_handle()
         self._sync_from_scene()
@@ -307,6 +321,11 @@ class TransformPanel(lf.ui.Panel):
 
     def _on_refresh(self, handle, event, args):
         self._sync_from_scene()
+        self._dirty_all()
+
+    def _on_reload_settings(self, handle, event, args):
+        self._load_settings()
+        self._status = "Settings reloaded from settings.json."
         self._dirty_all()
 
     def _on_grab(self, handle, event, args):
@@ -702,6 +721,10 @@ class TransformPanel(lf.ui.Panel):
                     "t_min", "t_max", "t_step",
                     "r_min", "r_max", "r_step",
                     "s_min", "s_max", "s_step",
+                    "tip_live", "tip_uniform",
+                    "tip_tx", "tip_ty", "tip_tz",
+                    "tip_rx", "tip_ry", "tip_rz",
+                    "tip_sx", "tip_sy", "tip_sz",
                     "merge_name", "folder_name", "move_target",
                     "status_text", "status_class")
 
