@@ -4,20 +4,14 @@
 """Transform Editor Panel for Lichtfeld Studio."""
 
 from __future__ import annotations
+import json
 import math
+from pathlib import Path
 import numpy as np
 import lichtfeld as lf
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _request_redraw():
-    for fn in ("tag_redraw", "request_redraw", "redraw", "invalidate"):
-        f = getattr(lf.ui, fn, None)
-        if callable(f):
-            try: f(); return
-            except Exception: pass
-
 
 def _mat_from_trs(tx, ty, tz, rx, ry, rz, sx, sy, sz):
     rx_r = math.radians(rx); ry_r = math.radians(ry); rz_r = math.radians(rz)
@@ -82,8 +76,6 @@ def _quat_mul_batch(q1, q2):
 
 def _merge_visible(name: str) -> str:
     """Merge all visible splat nodes into a single node called *name*.
-
-    Mirrors the logic from SORPanel._merge_visible in the SOR plugin.
     Returns an empty string on success or an error message on failure.
     """
     scene = lf.get_scene()
@@ -107,7 +99,24 @@ def _merge_visible(name: str) -> str:
         return str(e)
 
 
-def _bake(node_name):
+def _unique_node_name(scene, name: str) -> str:
+    """Return *name* if no node with that name exists in *scene*.
+    Otherwise append an incrementing two-digit suffix (_01, _02, …).
+    """
+    if scene.get_node(name) is None:
+        return name
+    counter = 1
+    while True:
+        candidate = f"{name}_{counter:02d}"
+        if scene.get_node(candidate) is None:
+            return candidate
+        counter += 1
+
+
+def _bake(node_name: str) -> str:
+    """Permanently write the node transform into its Gaussian data.
+    Returns an empty string on success or an error message on failure.
+    """
     s    = lf.get_scene()
     node = s.get_node(node_name)
     if node is None:
@@ -144,23 +153,22 @@ def _bake(node_name):
 
 # ── Panel ─────────────────────────────────────────────────────────────────────
 
-_T_RANGE = 50.0
-_R_RANGE = 180.0
-_S_MIN   = 0.01
-_S_MAX   = 5.0
-
-# Width of the manual input box on the right of each slider row (px).
-_INPUT_W = 60
+_T_STEP = 0.1
+_R_STEP = 1.0
+_S_STEP = 0.01
 
 
 class TransformPanel(lf.ui.Panel):
-    id    = "edit.transform_panel"
-    label = "Edit"
-    space = lf.ui.PanelSpace.MAIN_PANEL_TAB
-    order = 290
+    id                 = "edit.transform_panel"
+    label              = "Edit"
+    space              = lf.ui.PanelSpace.MAIN_PANEL_TAB
+    order              = 290
+    template           = str(Path(__file__).resolve().with_name("transform_panel.rml"))
+    height_mode        = lf.ui.PanelHeightMode.CONTENT
+    update_interval_ms = 100
 
     def __init__(self):
-        self._status         = ""
+        self._handle         = None
         self._node_name      = ""
         self._merge_name     = "merged"
         self._folder_name    = "Group"
@@ -170,143 +178,269 @@ class TransformPanel(lf.ui.Panel):
         self._sx = self._sy = self._sz = 1.0
         self._uniform_scale  = True
         self._live           = True
-        self._last_mat       = None
-        self._gen            = 0  # bumped on sync to flush input_float buffers
-        # Per-field display values for the input boxes — only updated on
-        # sync/grab so that typing a decimal is never interrupted by the slider.
-        self._input_buf: dict[str, float] = {}
+        self._status         = ""
+        self._last_node_name = None   # dirty-detection
+        self._load_settings()
 
     @classmethod
     def poll(cls, context) -> bool:
         return True
 
-    def _move_selected_splats(self, source_name: str, target_name: str) -> str:
-        """Move splats by manually calculating the node's offset in the global mask."""
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def on_bind_model(self, ctx):
+        model = ctx.create_data_model("transform_panel")
+
+        # Visibility guards
+        model.bind_func("no_scene",  lambda: not lf.has_scene())
+        model.bind_func("no_node",   lambda: lf.has_scene() and not self._node_name)
+        model.bind_func("has_node",  lambda: bool(self._node_name))
+        model.bind_func("node_name", lambda: self._node_name)
+
+        # Live checkbox
+        model.bind("live",
+                   lambda: self._live,
+                   self._set_live)
+
+        # Translation
+        model.bind("tx_str",
+                   lambda: f"{self._tx:.3f}",
+                   lambda v: self._set_trs("tx", v, -50.0, 50.0))
+        model.bind("ty_str",
+                   lambda: f"{self._ty:.3f}",
+                   lambda v: self._set_trs("ty", v, -50.0, 50.0))
+        model.bind("tz_str",
+                   lambda: f"{self._tz:.3f}",
+                   lambda v: self._set_trs("tz", v, -50.0, 50.0))
+
+        # Rotation
+        model.bind("rx_str",
+                   lambda: f"{self._rx:.1f}",
+                   lambda v: self._set_trs("rx", v, -180.0, 180.0))
+        model.bind("ry_str",
+                   lambda: f"{self._ry:.1f}",
+                   lambda v: self._set_trs("ry", v, -180.0, 180.0))
+        model.bind("rz_str",
+                   lambda: f"{self._rz:.1f}",
+                   lambda v: self._set_trs("rz", v, -180.0, 180.0))
+
+        # Scale
+        model.bind("uniform_scale",
+                   lambda: self._uniform_scale,
+                   self._set_uniform_scale)
+        model.bind("sx_str",
+                   lambda: f"{self._sx:.3f}",
+                   lambda v: self._set_trs("sx", v, 1e-6, 5.0))
+        model.bind("sy_str",
+                   lambda: f"{self._sy:.3f}",
+                   lambda v: self._set_trs("sy", v, 1e-6, 5.0))
+        model.bind("sz_str",
+                   lambda: f"{self._sz:.3f}",
+                   lambda v: self._set_trs("sz", v, 1e-6, 5.0))
+
+        # Text inputs
+        model.bind("merge_name",
+                   lambda: self._merge_name,
+                   lambda v: (setattr(self, "_merge_name", str(v)), self._save_settings()))
+        model.bind("folder_name",
+                   lambda: self._folder_name,
+                   lambda v: (setattr(self, "_folder_name", str(v)), self._save_settings()))
+        model.bind("move_target",
+                   lambda: self._move_target,
+                   lambda v: (setattr(self, "_move_target", str(v)), self._save_settings()))
+
+        # Status
+        model.bind_func("status_text",  lambda: self._status)
+        model.bind_func("status_class", self._status_class)
+
+        # Events
+        model.bind_event("do_refresh",       self._on_refresh)
+        model.bind_event("do_grab",          self._on_grab)
+        model.bind_event("do_apply",         self._on_apply)
+        model.bind_event("do_reset",         self._on_reset)
+        model.bind_event("do_bake",          self._on_bake)
+        model.bind_event("do_merge",         self._on_merge)
+        model.bind_event("do_create_folder", self._on_create_folder)
+        model.bind_event("do_move",          self._on_move)
+        model.bind_event("num_step",         self._on_num_step)
+
+        self._handle = model.get_handle()
+        self._sync_from_scene()
+
+    def on_update(self, doc):
+        current = lf.get_selected_node_name() if lf.has_scene() else ""
+        if current != self._last_node_name:
+            self._last_node_name = current
+            self._sync_from_scene()
+            self._dirty_all()
+            return True
+        return False
+
+    def on_unmount(self, doc):
+        doc.remove_data_model("transform_panel")
+        self._handle = None
+
+    # ── Event handlers ────────────────────────────────────────────────────────
+
+    def _on_refresh(self, handle, event, args):
+        self._sync_from_scene()
+        self._dirty_all()
+
+    def _on_grab(self, handle, event, args):
+        self._sync_from_scene()
+        self._dirty_all()
+
+    def _on_apply(self, handle, event, args):
+        self._apply_to_scene()
+        self._status = "Applied."
+        self._dirty("status_text", "status_class")
+
+    def _on_reset(self, handle, event, args):
+        self._tx = self._ty = self._tz = 0.0
+        self._rx = self._ry = self._rz = 0.0
+        self._sx = self._sy = self._sz = 1.0
+        self._apply_to_scene()
+        self._status = "Reset to identity."
+        self._save_settings()
+        self._dirty("tx_str", "ty_str", "tz_str",
+                    "rx_str", "ry_str", "rz_str",
+                    "sx_str", "sy_str", "sz_str",
+                    "status_text", "status_class")
+
+    def _on_bake(self, handle, event, args):
+        self._apply_to_scene()
+        err = _bake(self._node_name)
+        if err:
+            self._status = f"Bake failed: {err}"
+        else:
+            self._status = "Baked — transform reset to identity."
+            self._sync_from_scene()
+        self._dirty_all()
+
+    def _on_merge(self, handle, event, args):
+        err = _merge_visible(self._merge_name)
+        if err:
+            self._status = f"Merge failed: {err}"
+        else:
+            name = self._merge_name.strip() or "merged"
+            self._status = f"Merged visible nodes into '{name}'."
+            self._sync_from_scene()
+        self._dirty("status_text", "status_class")
+
+    def _on_create_folder(self, handle, event, args):
+        name = self._folder_name.strip() or "Group"
         try:
             scene = lf.get_scene()
-            global_mask = scene.selection_mask
-            if global_mask is None or not lf.has_selection():
-                return "Nothing selected."
-
-            # 1. CALCULATE TRUE OFFSET
-            # The global selection mask is built from VISIBLE splat nodes only,
-            # so we must walk the same filtered list to get the correct offset.
-            # Using scene.get_nodes() (all nodes, including hidden) was wrong —
-            # hidden nodes don't contribute to the mask but were shifting start_idx.
-            visible_splat_nodes = [n for n in scene.get_visible_nodes() if n.splat_data() is not None]
-            start_idx = 0
-            found_node = None
-
-            for n in visible_splat_nodes:
-                if n.name == source_name:
-                    found_node = n
-                    break
-                start_idx += n.splat_data().num_points
-
-            if not found_node:
-                return f"Source node '{source_name}' not found (or not visible)."
-
-            # 2. CAPTURE LOCAL MASK
-            num_points = found_node.splat_data().num_points
-            local_mask_tensor = global_mask[start_idx : start_idx + num_points]
-            # Cast to bool — ~operator on uint8 gives bitwise NOT (255), not logical NOT
-            mask_np = local_mask_tensor.cpu().numpy().astype(bool)
-
-            selected_count = int(mask_np.sum())
-            lf.log.info(f"EDIT move: source='{source_name}' total={num_points} selected={selected_count} start_idx={start_idx}")
-            if selected_count == 0:
-                return "No splats selected in this node."
-
-            # 3. DETACH UI
-            scene.clear_selection()
-
-            # 4. PERFORM THE MOVE
-            # Snapshot selected splats from source BEFORE any mutation.
-            source_sd = found_node.splat_data()
-            selected_idx = np.where(mask_np)[0]
-            inlier_idx   = np.where(~mask_np)[0]
-
-            def _gather(tensor, idx):
-                return lf.Tensor.from_numpy(tensor.cpu().numpy()[idx]).cuda()
-
-            # Selected splats — go to target
-            sel_means    = _gather(source_sd.means_raw,    selected_idx)
-            sel_sh0      = _gather(source_sd.sh0_raw,      selected_idx)
-            sel_shN      = _gather(source_sd.shN_raw,      selected_idx)
-            sel_scaling  = _gather(source_sd.scaling_raw,  selected_idx)
-            sel_rotation = _gather(source_sd.rotation_raw, selected_idx)
-            sel_opacity  = _gather(source_sd.opacity_raw,  selected_idx)
-
-            # Inlier splats — stay in source
-            inlier_means    = _gather(source_sd.means_raw,    inlier_idx)
-            inlier_sh0      = _gather(source_sd.sh0_raw,      inlier_idx)
-            inlier_shN      = _gather(source_sd.shN_raw,      inlier_idx)
-            inlier_scaling  = _gather(source_sd.scaling_raw,  inlier_idx)
-            inlier_rotation = _gather(source_sd.rotation_raw, inlier_idx)
-            inlier_opacity  = _gather(source_sd.opacity_raw,  inlier_idx)
-
-            active_sh = source_sd.active_sh_degree
-            s_scale   = source_sd.scene_scale
-
-            # Build / update the target node with selected splats.
-            # SOR-style: always remove+add to guarantee a fresh panel entry.
-            target_node = scene.get_node(target_name)
-            if target_node is not None:
-                target_sd = target_node.splat_data()
-                # Merge by gathering existing + new splats together
-                def _cat(a, b):
-                    return lf.Tensor.from_numpy(
-                        np.concatenate([a.cpu().numpy(), b.cpu().numpy()], axis=0)
-                    ).cuda()
-                merged_means    = _cat(target_sd.means_raw,    sel_means)
-                merged_sh0      = _cat(target_sd.sh0_raw,      sel_sh0)
-                merged_shN      = _cat(target_sd.shN_raw,      sel_shN)
-                merged_scaling  = _cat(target_sd.scaling_raw,  sel_scaling)
-                merged_rotation = _cat(target_sd.rotation_raw, sel_rotation)
-                merged_opacity  = _cat(target_sd.opacity_raw,  sel_opacity)
-                scene.remove_node(target_name)
-                scene.add_splat(
-                    target_name,
-                    merged_means, merged_sh0, merged_shN,
-                    merged_scaling, merged_rotation, merged_opacity,
-                    active_sh, s_scale,
-                )
+            if scene is None:
+                self._status = "No scene loaded."
             else:
-                scene.add_splat(
-                    target_name,
-                    sel_means, sel_sh0, sel_shN,
-                    sel_scaling, sel_rotation, sel_opacity,
-                    active_sh, s_scale,
-                )
-
-            lf.log.info(f"EDIT move: target='{target_name}' built with {len(selected_idx)} splats")
-
-            # Rebuild source node with only the inlier splats (SOR-style replace).
-            scene.remove_node(source_name)
-            scene.add_splat(
-                source_name,
-                inlier_means, inlier_sh0, inlier_shN,
-                inlier_scaling, inlier_rotation, inlier_opacity,
-                active_sh, s_scale,
-            )
-
-            lf.log.info(f"EDIT move: source='{source_name}' rebuilt with {len(inlier_idx)} splats")
-
-            # 5. REFRESH
-            scene.invalidate_cache()
-            scene.notify_changed()
-            return ""  # Success
-            
+                scene.add_group(name)
+                scene.notify_changed()
+                self._status = f"Created group '{name}'."
         except Exception as e:
-            import traceback
-            lf.log.error(f"EDIT move error: {traceback.format_exc()}")
-            return str(e)
+            self._status = f"Create group failed: {e}"
+        self._dirty("status_text", "status_class")
 
+    def _on_move(self, handle, event, args):
+        target_name = self._move_target.strip()
+        if not target_name:
+            self._status = "Enter a target node name first."
+            self._dirty("status_text", "status_class")
+            return
+        scene = lf.get_scene()
+        if scene is None:
+            self._status = "No scene loaded."
+            self._dirty("status_text", "status_class")
+            return
+        if target_name != self._node_name:
+            unique_target = _unique_node_name(scene, target_name)
+            if unique_target != target_name:
+                self._status = (
+                    f"'{target_name}' already exists — "
+                    f"using '{unique_target}' instead."
+                )
+                target_name       = unique_target
+                self._move_target = target_name
+                self._dirty("move_target", "status_text", "status_class")
+        err = self._move_selected_splats(self._node_name, target_name)
+        if err:
+            self._status = f"Move failed: {err}"
+        else:
+            self._status     = f"Moved selected splats \u2192 '{target_name}'."
+            self._move_target = "Selection"
+            self._sync_from_scene()
+        self._dirty_all()
 
+    def _on_num_step(self, handle, event, args):
+        if not args or len(args) < 2:
+            return
+        field     = str(args[0])
+        direction = int(args[1])
+
+        steps  = dict(tx=_T_STEP, ty=_T_STEP, tz=_T_STEP,
+                      rx=_R_STEP, ry=_R_STEP, rz=_R_STEP,
+                      sx=_S_STEP, sy=_S_STEP, sz=_S_STEP)
+        ranges = dict(tx=(-50.0, 50.0), ty=(-50.0, 50.0), tz=(-50.0, 50.0),
+                      rx=(-180.0, 180.0), ry=(-180.0, 180.0), rz=(-180.0, 180.0),
+                      sx=(1e-6, 5.0),    sy=(1e-6, 5.0),    sz=(1e-6, 5.0))
+        if field not in steps:
+            return
+
+        lo, hi  = ranges[field]
+        current = getattr(self, f"_{field}")
+        new_val = round(max(lo, min(hi, current + direction * steps[field])), 4)
+        if abs(new_val - current) < 1e-9:
+            return
+        setattr(self, f"_{field}", new_val)
+
+        if field == "sx" and self._uniform_scale:
+            self._sy = self._sz = new_val
+            self._dirty("sy_str", "sz_str")
+
+        if self._live:
+            self._apply_to_scene()
+        self._dirty(f"{field}_str")
+        self._save_settings()
+
+    # ── Setters ───────────────────────────────────────────────────────────────
+
+    def _set_live(self, value):
+        if isinstance(value, str):
+            self._live = value.lower() not in ("false", "0", "")
+        else:
+            self._live = bool(value)
+        self._save_settings()
+
+    def _set_uniform_scale(self, value):
+        if isinstance(value, str):
+            self._uniform_scale = value.lower() not in ("false", "0", "")
+        else:
+            self._uniform_scale = bool(value)
+        self._save_settings()
+
+    def _set_trs(self, attr: str, value, lo: float, hi: float):
+        try:
+            v = max(lo, min(hi, float(value)))
+        except (TypeError, ValueError):
+            return
+        if abs(v - getattr(self, f"_{attr}")) < 1e-9:
+            return
+        setattr(self, f"_{attr}", v)
+
+        if attr == "sx" and self._uniform_scale:
+            self._sy = self._sz = v
+            self._dirty("sy_str", "sz_str")
+
+        if self._live:
+            self._apply_to_scene()
+        self._dirty(f"{attr}_str")
+        self._save_settings()
+
+    # ── Scene sync ────────────────────────────────────────────────────────────
 
     def _sync_from_scene(self):
         try:
-            name = lf.get_selected_node_name()
+            name = lf.get_selected_node_name() if lf.has_scene() else ""
             if not name:
                 self._node_name = ""
                 return
@@ -317,10 +451,6 @@ class TransformPanel(lf.ui.Panel):
             (self._tx, self._ty, self._tz,
              self._rx, self._ry, self._rz,
              self._sx, self._sy, self._sz) = _decompose_mat(node.world_transform)
-            self._last_mat = None
-            self._gen += 1
-            self._input_buf.clear()
-            self._status = f"Synced: {name}"
             lf.log.info(f"EDIT synced: t=({self._tx:.3f},{self._ty:.3f},{self._tz:.3f}) "
                         f"r=({self._rx:.1f},{self._ry:.1f},{self._rz:.1f}) "
                         f"s=({self._sx:.3f},{self._sy:.3f},{self._sz:.3f})")
@@ -334,223 +464,193 @@ class TransformPanel(lf.ui.Panel):
             mat = _mat_from_trs(self._tx, self._ty, self._tz,
                                  self._rx, self._ry, self._rz,
                                  self._sx, self._sy, self._sz)
-            if mat != self._last_mat:
-                lf.set_node_transform(self._node_name, mat)
-                self._last_mat = mat
+            lf.set_node_transform(self._node_name, mat)
         except Exception as e:
             self._status = f"Apply error: {e}"
 
-    def _row(self, ui, label, uid, value, lo, hi, step):
-        """One row: label | drag slider | input box, all on the same line.
+    def _move_selected_splats(self, source_name: str, target_name: str) -> str:
+        """Move splats by manually calculating the node's offset in the global mask."""
+        try:
+            scene       = lf.get_scene()
+            global_mask = scene.selection_mask
+            if global_mask is None or not lf.has_selection():
+                return "Nothing selected."
 
-        Slider fills all space except _INPUT_W px reserved for the input box.
-        The input box has its own buffer (_input_buf) that is only refreshed on
-        sync/grab (when _gen bumps), so typing a decimal is never interrupted
-        by slider movement.
-        """
-        ui.push_item_width(14)
-        ui.label(label)
-        ui.pop_item_width()
-        ui.same_line()
+            visible_splat_nodes = [n for n in scene.get_visible_nodes()
+                                   if n.splat_data() is not None]
+            start_idx  = 0
+            found_node = None
+            for n in visible_splat_nodes:
+                if n.name == source_name:
+                    found_node = n
+                    break
+                start_idx += n.splat_data().num_points
 
-        # Slider fills all remaining space except _INPUT_W px on the right.
-        ui.push_item_width(-_INPUT_W)
-        ch_d, v_d = ui.drag_float(f"##{uid}_d", value, step, lo, hi)
-        ui.pop_item_width()
+            if not found_node:
+                return f"Source node '{source_name}' not found (or not visible)."
 
-        ui.same_line()
+            num_points        = found_node.splat_data().num_points
+            local_mask_tensor = global_mask[start_idx : start_idx + num_points]
+            mask_np           = local_mask_tensor.cpu().numpy().astype(bool)
+            selected_count    = int(mask_np.sum())
 
-        # Input box — uses its own buffer so mid-decimal typing isn't clobbered
-        # by slider updates.  Buffer is only re-seeded when _gen changes (i.e.
-        # after a Grab or Sync), via a fresh widget ID.
-        buf_key = f"{uid}_{self._gen}"
-        if buf_key not in self._input_buf:
-            self._input_buf[buf_key] = value
-        ui.push_item_width(_INPUT_W)
-        ch_i, v_i = ui.input_float(f"##{uid}_i{self._gen}", self._input_buf[buf_key], 0.0, 0.0)
-        ui.pop_item_width()
-        if ch_i:
-            self._input_buf[buf_key] = float(v_i)
+            lf.log.info(f"EDIT move: source='{source_name}' total={num_points} "
+                        f"selected={selected_count} start_idx={start_idx}")
+            if selected_count == 0:
+                return "No splats selected in this node."
 
-        if ch_i:
-            return True, float(v_i)
-        if ch_d:
-            return True, float(v_d)
-        return False, value
+            scene.clear_selection()
 
-    def draw(self, ui):
-        ui.heading("Edit Transform")
+            source_sd    = found_node.splat_data()
+            selected_idx = np.where(mask_np)[0]
+            inlier_idx   = np.where(~mask_np)[0]
 
-        if not lf.has_scene():
-            ui.text_disabled("No scene loaded.")
-            return
+            def _gather(tensor, idx):
+                return lf.Tensor.from_numpy(tensor.cpu().numpy()[idx]).cuda()
 
-        current_name = lf.get_selected_node_name()
-        if current_name != self._node_name:
-            self._sync_from_scene()
+            sel_means    = _gather(source_sd.means_raw,    selected_idx)
+            sel_sh0      = _gather(source_sd.sh0_raw,      selected_idx)
+            sel_shN      = _gather(source_sd.shN_raw,      selected_idx)
+            sel_scaling  = _gather(source_sd.scaling_raw,  selected_idx)
+            sel_rotation = _gather(source_sd.rotation_raw, selected_idx)
+            sel_opacity  = _gather(source_sd.opacity_raw,  selected_idx)
 
-        if not self._node_name:
-            ui.text_disabled("Select a splat node in the scene.")
-            if ui.button("Refresh##ref"):
-                self._sync_from_scene()
-                _request_redraw()
-            return
+            inlier_means    = _gather(source_sd.means_raw,    inlier_idx)
+            inlier_sh0      = _gather(source_sd.sh0_raw,      inlier_idx)
+            inlier_shN      = _gather(source_sd.shN_raw,      inlier_idx)
+            inlier_scaling  = _gather(source_sd.scaling_raw,  inlier_idx)
+            inlier_rotation = _gather(source_sd.rotation_raw, inlier_idx)
+            inlier_opacity  = _gather(source_sd.opacity_raw,  inlier_idx)
 
-        ui.label(f"Node:  {self._node_name}")
-        if ui.button("Grab from viewport##grab"):
-            self._sync_from_scene()
-            _request_redraw()
-        ui.same_line()
-        _, self._live = ui.checkbox("Live##live", self._live)
+            active_sh = source_sd.active_sh_degree
+            s_scale   = source_sd.scene_scale
 
-        ui.separator()
-        changed_any = False
-
-        # ── Translation ───────────────────────────────────────────────────────
-        ui.label("Translation")
-        ch, v = self._row(ui, "X", "tx", self._tx, -_T_RANGE, _T_RANGE, 0.001)
-        if ch: self._tx = v; changed_any = True
-        ch, v = self._row(ui, "Y", "ty", self._ty, -_T_RANGE, _T_RANGE, 0.001)
-        if ch: self._ty = v; changed_any = True
-        ch, v = self._row(ui, "Z", "tz", self._tz, -_T_RANGE, _T_RANGE, 0.001)
-        if ch: self._tz = v; changed_any = True
-
-        ui.separator()
-
-        # ── Rotation ──────────────────────────────────────────────────────────
-        ui.label("Rotation (°)")
-        ch, v = self._row(ui, "X", "rx", self._rx, -_R_RANGE, _R_RANGE, 0.1)
-        if ch: self._rx = v; changed_any = True
-        ch, v = self._row(ui, "Y", "ry", self._ry, -_R_RANGE, _R_RANGE, 0.1)
-        if ch: self._ry = v; changed_any = True
-        ch, v = self._row(ui, "Z", "rz", self._rz, -_R_RANGE, _R_RANGE, 0.1)
-        if ch: self._rz = v; changed_any = True
-
-        ui.separator()
-
-        # ── Scale ─────────────────────────────────────────────────────────────
-        ui.label("Scale")
-        _, self._uniform_scale = ui.checkbox("Uniform##uni", self._uniform_scale)
-
-        ch, v = self._row(ui, "X", "sx", self._sx, _S_MIN, _S_MAX, 0.001)
-        if ch:
-            self._sx = max(1e-6, v)
-            if self._uniform_scale:
-                self._sy = self._sz = self._sx
-            changed_any = True
-
-        ch, v = self._row(ui, "Y", "sy", self._sy, _S_MIN, _S_MAX, 0.001)
-        if ch and not self._uniform_scale:
-            self._sy = max(1e-6, v); changed_any = True
-
-        ch, v = self._row(ui, "Z", "sz", self._sz, _S_MIN, _S_MAX, 0.001)
-        if ch and not self._uniform_scale:
-            self._sz = max(1e-6, v); changed_any = True
-
-        # Apply live; bump _gen so input boxes refresh from new slider value.
-        if changed_any and self._live:
-            self._apply_to_scene()
-            self._gen += 1
-            self._input_buf.clear()
-
-        ui.separator()
-
-        if ui.button("Apply##ap"):
-            self._apply_to_scene()
-            self._status = "Applied."
-            _request_redraw()
-        ui.same_line()
-        if ui.button("Reset##rs"):
-            self._tx = self._ty = self._tz = 0.0
-            self._rx = self._ry = self._rz = 0.0
-            self._sx = self._sy = self._sz = 1.0
-            self._gen += 1
-            self._input_buf.clear()
-            self._apply_to_scene()
-            self._status = "Reset to identity."
-            _request_redraw()
-
-        ui.separator()
-
-        # ── Bake ──────────────────────────────────────────────────────────────
-        ui.label("Bake")
-        if ui.button_styled("Bake Transform##bk", "primary"):
-            self._apply_to_scene()
-            err = _bake(self._node_name)
-            if err:
-                self._status = f"Bake failed: {err}"
+            target_node = scene.get_node(target_name)
+            if target_node is not None:
+                target_sd = target_node.splat_data()
+                def _cat(a, b):
+                    return lf.Tensor.from_numpy(
+                        np.concatenate([a.cpu().numpy(), b.cpu().numpy()], axis=0)
+                    ).cuda()
+                scene.remove_node(target_name)
+                scene.add_splat(
+                    target_name,
+                    _cat(target_sd.means_raw,    sel_means),
+                    _cat(target_sd.sh0_raw,      sel_sh0),
+                    _cat(target_sd.shN_raw,      sel_shN),
+                    _cat(target_sd.scaling_raw,  sel_scaling),
+                    _cat(target_sd.rotation_raw, sel_rotation),
+                    _cat(target_sd.opacity_raw,  sel_opacity),
+                    active_sh, s_scale,
+                )
             else:
-                self._status = "Baked — transform reset to identity."
-                self._sync_from_scene()
-            _request_redraw()
-        ui.text_disabled("Permanently writes transform into Gaussian data.")
-        ui.text_disabled("Save a backup before baking.")
+                scene.add_splat(
+                    target_name,
+                    sel_means, sel_sh0, sel_shN,
+                    sel_scaling, sel_rotation, sel_opacity,
+                    active_sh, s_scale,
+                )
 
-        ui.separator()
+            lf.log.info(f"EDIT move: target='{target_name}' built with {len(selected_idx)} splats")
 
-        # ── Merge Visible Nodes ───────────────────────────────────────────────
-        ui.label("Merge Visible Nodes")
-        ui.push_item_width(120)
-        _, self._merge_name = ui.input_text("##merge_name", self._merge_name)
-        ui.pop_item_width()
-        ui.same_line()
-        if ui.button_styled("Merge Visible##mv", "primary"):
-            err = _merge_visible(self._merge_name)
-            if err:
-                self._status = f"Merge failed: {err}"
-            else:
-                name = self._merge_name.strip() or "merged"
-                self._status = f"Merged visible nodes into '{name}'."
-                self._sync_from_scene()
-            _request_redraw()
-        ui.text_disabled("Combines all visible splat nodes into one named node.")
+            scene.remove_node(source_name)
+            scene.add_splat(
+                source_name,
+                inlier_means, inlier_sh0, inlier_shN,
+                inlier_scaling, inlier_rotation, inlier_opacity,
+                active_sh, s_scale,
+            )
 
-        ui.separator()
+            lf.log.info(f"EDIT move: source='{source_name}' rebuilt with {len(inlier_idx)} splats")
 
-        # ── New Group Folder ──────────────────────────────────────────────────
-        ui.label("New Group Folder")
-        ui.push_item_width(120)
-        _, self._folder_name = ui.input_text("##folder_name", self._folder_name)
-        ui.pop_item_width()
-        ui.same_line()
-        if ui.button("Create##cf"):
-            name = self._folder_name.strip() or "Group"
+            scene.invalidate_cache()
+            scene.notify_changed()
+            return ""
+
+        except Exception as e:
+            import traceback
+            lf.log.error(f"EDIT move error: {traceback.format_exc()}")
+            return str(e)
+
+    # ── Settings persistence ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _settings_path() -> Path:
+        return Path(__file__).resolve().with_name("settings.json")
+
+    def _load_settings(self):
+        try:
+            data = json.loads(self._settings_path().read_text(encoding="utf-8"))
+            t = data.get("transform", {})
+            self._tx            = float(t.get("tx",            self._tx))
+            self._ty            = float(t.get("ty",            self._ty))
+            self._tz            = float(t.get("tz",            self._tz))
+            self._rx            = float(t.get("rx",            self._rx))
+            self._ry            = float(t.get("ry",            self._ry))
+            self._rz            = float(t.get("rz",            self._rz))
+            self._sx            = float(t.get("sx",            self._sx))
+            self._sy            = float(t.get("sy",            self._sy))
+            self._sz            = float(t.get("sz",            self._sz))
+            self._uniform_scale = bool(t.get("uniform_scale",  self._uniform_scale))
+            self._live          = bool(t.get("live",           self._live))
+            self._merge_name    = str(t.get("merge_name",      self._merge_name))
+            self._folder_name   = str(t.get("folder_name",     self._folder_name))
+            self._move_target   = str(t.get("move_target",     self._move_target))
+        except FileNotFoundError:
+            pass  # first run — file will be created on first save
+        except Exception as e:
+            lf.log.error(f"EDIT settings load error: {e}")
+
+    def _save_settings(self):
+        try:
+            path = self._settings_path()
+            # Preserve any existing top-level keys (e.g. load_on_startup)
             try:
-                scene = lf.get_scene()
-                if scene is None:
-                    self._status = "No scene loaded."
-                else:
-                    scene.add_group(name)
-                    scene.notify_changed()
-                    self._status = f"Created group '{name}'."
-            except Exception as e:
-                self._status = f"Create group failed: {e}"
-            _request_redraw()
-        ui.text_disabled("Adds an empty folder node to the scene hierarchy.")
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+            data["transform"] = {
+                "tx":            round(self._tx, 4),
+                "ty":            round(self._ty, 4),
+                "tz":            round(self._tz, 4),
+                "rx":            round(self._rx, 4),
+                "ry":            round(self._ry, 4),
+                "rz":            round(self._rz, 4),
+                "sx":            round(self._sx, 4),
+                "sy":            round(self._sy, 4),
+                "sz":            round(self._sz, 4),
+                "uniform_scale": self._uniform_scale,
+                "live":          self._live,
+                "merge_name":    self._merge_name,
+                "folder_name":   self._folder_name,
+                "move_target":   self._move_target,
+            }
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            lf.log.error(f"EDIT settings save error: {e}")
 
-        # ── Move Selected Splats ──────────────────────────────────────────────
-        ui.label("Move Selected Splats")
-        ui.push_item_width(120)
-        _, self._move_target = ui.input_text("##move_target", self._move_target)
-        ui.pop_item_width()
-        ui.same_line()
-        if ui.button_styled("Move##mv_splats", "primary"):
-            target_name = self._move_target.strip()
-            if not target_name:
-                self._status = "Enter a target node name first."
-            else:
-                # Call the method correctly with both arguments
-                err = self._move_selected_splats(self._node_name, target_name)
-                if err:
-                    self._status = f"Move failed: {err}"
-                else:
-                    self._status = f"Moved selected splats → '{target_name}'."
-                    self._move_target = "Selection" # Reset to default
-                    self._sync_from_scene()
-            _request_redraw()
-        ui.text_disabled("Target node name to move selected splats into.")
-        ui.separator()
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
+    def _dirty(self, *fields):
+        if not self._handle:
+            return
+        for f in fields:
+            self._handle.dirty(f)
 
-        if self._status:
-            ui.label(self._status)
+    def _dirty_all(self):
+        self._dirty("no_scene", "no_node", "has_node", "node_name",
+                    "tx_str", "ty_str", "tz_str",
+                    "rx_str", "ry_str", "rz_str",
+                    "sx_str", "sy_str", "sz_str",
+                    "live", "uniform_scale",
+                    "merge_name", "folder_name", "move_target",
+                    "status_text", "status_class")
+
+    def _status_class(self) -> str:
+        s = self._status
+        if any(w in s for w in ("Moved", "Merged", "Created", "Applied",
+                                "Reset", "Baked", "Synced")):
+            return "text-accent"
+        if s and ("failed" in s.lower() or "error" in s.lower()):
+            return "text-muted"
+        return "text-default"
