@@ -98,6 +98,7 @@ def _merge_visible(name: str) -> str:
         for n in nodes:
             scene.reparent(n.id, group_id)
         scene.merge_group(name)
+        scene.invalidate_cache()
         scene.notify_changed()
         return ""
     except Exception as e:
@@ -220,30 +221,79 @@ class TransformPanel(lf.ui.Panel):
             scene.clear_selection()
 
             # 4. PERFORM THE MOVE
-            # soft_delete(mask) REMOVES splats where mask is True.
-            # So to keep only the selection in the duplicate we delete the inverse.
-            delete_from_dup    = lf.Tensor.from_numpy(~mask_np).cuda()  # delete non-selected
-            delete_from_source = lf.Tensor.from_numpy(mask_np).cuda()   # delete selected
+            # Snapshot selected splats from source BEFORE any mutation.
+            source_sd = found_node.splat_data()
+            selected_idx = np.where(mask_np)[0]
+            inlier_idx   = np.where(~mask_np)[0]
 
-            temp_name = scene.duplicate_node(source_name)
-            temp_node = scene.get_node(temp_name)
-            temp_sd = temp_node.splat_data()
-            temp_sd.soft_delete(delete_from_dup)
-            temp_sd.apply_deleted()
+            def _gather(tensor, idx):
+                return lf.Tensor.from_numpy(tensor.cpu().numpy()[idx]).cuda()
 
-            lf.log.info(f"EDIT move: '{temp_name}' has {temp_node.splat_data().num_points} splats after strip")
+            # Selected splats — go to target
+            sel_means    = _gather(source_sd.means_raw,    selected_idx)
+            sel_sh0      = _gather(source_sd.sh0_raw,      selected_idx)
+            sel_shN      = _gather(source_sd.shN_raw,      selected_idx)
+            sel_scaling  = _gather(source_sd.scaling_raw,  selected_idx)
+            sel_rotation = _gather(source_sd.rotation_raw, selected_idx)
+            sel_opacity  = _gather(source_sd.opacity_raw,  selected_idx)
 
+            # Inlier splats — stay in source
+            inlier_means    = _gather(source_sd.means_raw,    inlier_idx)
+            inlier_sh0      = _gather(source_sd.sh0_raw,      inlier_idx)
+            inlier_shN      = _gather(source_sd.shN_raw,      inlier_idx)
+            inlier_scaling  = _gather(source_sd.scaling_raw,  inlier_idx)
+            inlier_rotation = _gather(source_sd.rotation_raw, inlier_idx)
+            inlier_opacity  = _gather(source_sd.opacity_raw,  inlier_idx)
+
+            active_sh = source_sd.active_sh_degree
+            s_scale   = source_sd.scene_scale
+
+            # Build / update the target node with selected splats.
+            # SOR-style: always remove+add to guarantee a fresh panel entry.
             target_node = scene.get_node(target_name)
             if target_node is not None:
-                scene.merge_nodes([target_name, temp_name], target_name)
+                target_sd = target_node.splat_data()
+                # Merge by gathering existing + new splats together
+                def _cat(a, b):
+                    return lf.Tensor.from_numpy(
+                        np.concatenate([a.cpu().numpy(), b.cpu().numpy()], axis=0)
+                    ).cuda()
+                merged_means    = _cat(target_sd.means_raw,    sel_means)
+                merged_sh0      = _cat(target_sd.sh0_raw,      sel_sh0)
+                merged_shN      = _cat(target_sd.shN_raw,      sel_shN)
+                merged_scaling  = _cat(target_sd.scaling_raw,  sel_scaling)
+                merged_rotation = _cat(target_sd.rotation_raw, sel_rotation)
+                merged_opacity  = _cat(target_sd.opacity_raw,  sel_opacity)
+                scene.remove_node(target_name)
+                scene.add_splat(
+                    target_name,
+                    merged_means, merged_sh0, merged_shN,
+                    merged_scaling, merged_rotation, merged_opacity,
+                    active_sh, s_scale,
+                )
             else:
-                lf.rename_node(temp_name, target_name)
+                scene.add_splat(
+                    target_name,
+                    sel_means, sel_sh0, sel_shN,
+                    sel_scaling, sel_rotation, sel_opacity,
+                    active_sh, s_scale,
+                )
 
-            source_sd = found_node.splat_data()
-            source_sd.soft_delete(delete_from_source)
-            source_sd.apply_deleted()
+            lf.log.info(f"EDIT move: target='{target_name}' built with {len(selected_idx)} splats")
+
+            # Rebuild source node with only the inlier splats (SOR-style replace).
+            scene.remove_node(source_name)
+            scene.add_splat(
+                source_name,
+                inlier_means, inlier_sh0, inlier_shN,
+                inlier_scaling, inlier_rotation, inlier_opacity,
+                active_sh, s_scale,
+            )
+
+            lf.log.info(f"EDIT move: source='{source_name}' rebuilt with {len(inlier_idx)} splats")
 
             # 5. REFRESH
+            scene.invalidate_cache()
             scene.notify_changed()
             return ""  # Success
             
