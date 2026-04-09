@@ -6,6 +6,8 @@
 from __future__ import annotations
 import json
 import math
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
 import lichtfeld as lf
@@ -180,6 +182,7 @@ class TransformPanel(lf.ui.Panel):
         self._live           = True
         self._status         = ""
         self._last_node_name = None   # dirty-detection
+        self._last_logged    = None   # dedup: last transform written to session log
 
         # Slider limits — defaults; overridden by settings.json if present
         self._t_min  = -50.0
@@ -300,6 +303,7 @@ class TransformPanel(lf.ui.Panel):
         model.bind_event("do_move",            self._on_move)
         model.bind_event("num_step",           self._on_num_step)
         model.bind_event("do_reload_settings", self._on_reload_settings)
+        model.bind_event("do_open_log",        self._on_open_log)
 
         self._handle = model.get_handle()
         self._sync_from_scene()
@@ -328,12 +332,36 @@ class TransformPanel(lf.ui.Panel):
         self._status = "Settings reloaded from settings.json."
         self._dirty_all()
 
+    def _on_open_log(self, handle, event, args):
+        log_path = self._log_path()
+        try:
+            # Ensure the file exists before trying to open it
+            if not log_path.exists():
+                log_path.write_text("[]", encoding="utf-8")
+            # Try Notepad++ first; fall back to the system default text editor
+            npp_candidates = [
+                r"C:\Program Files\Notepad++\notepad++.exe",
+                r"C:\Program Files (x86)\Notepad++\notepad++.exe",
+            ]
+            npp = next((p for p in npp_candidates if Path(p).exists()), None)
+            if npp:
+                subprocess.Popen([npp, str(log_path)])
+                self._status = "Opened session_log.json in Notepad++."
+            else:
+                subprocess.Popen(["notepad.exe", str(log_path)])
+                self._status = "Notepad++ not found — opened in Notepad."
+        except Exception as e:
+            self._status = f"Could not open log: {e}"
+        self._dirty("status_text", "status_class")
+
     def _on_grab(self, handle, event, args):
         self._sync_from_scene()
+        self._log_transform("grab")
         self._dirty_all()
 
     def _on_apply(self, handle, event, args):
         self._apply_to_scene()
+        self._log_transform("apply")
         self._status = "Applied."
         self._dirty("status_text", "status_class")
 
@@ -342,6 +370,7 @@ class TransformPanel(lf.ui.Panel):
         self._rx = self._ry = self._rz = 0.0
         self._sx = self._sy = self._sz = 1.0
         self._apply_to_scene()
+        self._log_transform("reset")
         self._status = "Reset to identity."
         self._save_settings()
         self._dirty("tx_str", "ty_str", "tz_str",
@@ -351,6 +380,7 @@ class TransformPanel(lf.ui.Panel):
 
     def _on_bake(self, handle, event, args):
         self._apply_to_scene()
+        self._log_transform("bake")
         err = _bake(self._node_name)
         if err:
             self._status = f"Bake failed: {err}"
@@ -625,6 +655,56 @@ class TransformPanel(lf.ui.Panel):
     @staticmethod
     def _settings_path() -> Path:
         return Path(__file__).resolve().with_name("settings.json")
+
+    @staticmethod
+    def _log_path() -> Path:
+        return Path(__file__).resolve().with_name("session_log.json")
+
+    def _log_transform(self, action: str = "apply"):
+        """Append one transform entry to session_log.json, skipping exact duplicates."""
+        try:
+            snapshot = (
+                action,
+                self._node_name,
+                round(self._tx, 4), round(self._ty, 4), round(self._tz, 4),
+                round(self._rx, 4), round(self._ry, 4), round(self._rz, 4),
+                round(self._sx, 4), round(self._sy, 4), round(self._sz, 4),
+                self._uniform_scale, self._live,
+            )
+            if snapshot == self._last_logged:
+                return
+            self._last_logged = snapshot
+
+            path = self._log_path()
+            try:
+                log = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(log, list):
+                    log = []
+            except Exception:
+                log = []
+
+            entry = {
+                "time":   datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "action": action,
+                "node":   self._node_name,
+                "transform": {
+                    "tx": round(self._tx, 4),
+                    "ty": round(self._ty, 4),
+                    "tz": round(self._tz, 4),
+                    "rx": round(self._rx, 4),
+                    "ry": round(self._ry, 4),
+                    "rz": round(self._rz, 4),
+                    "sx": round(self._sx, 4),
+                    "sy": round(self._sy, 4),
+                    "sz": round(self._sz, 4),
+                    "uniform_scale": self._uniform_scale,
+                    "live":          self._live,
+                },
+            }
+            log.append(entry)
+            path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+        except Exception as e:
+            lf.log.error(f"EDIT session log error: {e}")
 
     def _load_settings(self):
         try:

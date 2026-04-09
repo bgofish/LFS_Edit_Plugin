@@ -4,7 +4,7 @@
 
   <!-- Node header -->
   <div data-if="no_scene">
-    <span class="text-muted">No scene loaded.</span>
+    <span class="text-muted">No scene loaded !</span>
   </div>
 
   <div data-if="no_node">
@@ -26,6 +26,8 @@
       <span data-attr-title="tip_live">Live</span>
       <button class="btn" data-event-click="do_reload_settings"
               title="Reload settings.json from disk — updates slider limits, step sizes, and tooltips without restarting.">Read Settings</button>
+      <button class="btn" data-event-click="do_open_log"
+              title="Open session_log.json in Notepad++ (falls back to Notepad if Notepad++ is not installed).">Open Log</button>
     </div>
 
     <div class="separator"></div>
