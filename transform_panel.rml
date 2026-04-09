@@ -4,7 +4,7 @@
 
   <!-- Node header -->
   <div data-if="no_scene">
-    <span class="text-muted">No scene loaded !</span>
+    <span class="text-muted">No scene loaded.</span>
   </div>
 
   <div data-if="no_node">
@@ -28,6 +28,8 @@
               title="Reload settings.json from disk — updates slider limits, step sizes, and tooltips without restarting.">Read Settings</button>
       <button class="btn" data-event-click="do_open_log"
               title="Open session_log.json in Notepad++ (falls back to Notepad if Notepad++ is not installed).">Open Log</button>
+      <button class="btn" data-event-click="do_open_settings"
+              title="Open settings.json in Notepad++ (falls back to Notepad if Notepad++ is not installed).">Open Settings</button>
     </div>
 
     <div class="separator"></div>
@@ -132,7 +134,7 @@
     <span class="section-label" style="color: #4A90D9;">Bake</span>
     <div class="btn-row">
       <button class="btn btn--full" data-event-click="do_bake"
-              title="Permanently fold the current transform into the raw Gaussian data (means, scales, rotations), then reset the node transform to identity. This cannot be undone — save a backup first.">Bake Transform</button>
+              title="Permanently fold the current transform into the raw Gaussian data, then reset to identity. If a group is selected, all splat nodes inside it are baked. This cannot be undone — save a backup first.">Bake Transform</button>
     </div>
     <span class="text-muted">Permanently writes transform into Gaussian data.</span><br/>
     <span class="text-muted">Save a backup before baking.</span>
