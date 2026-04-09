@@ -153,6 +153,71 @@ def _bake(node_name: str) -> str:
         return str(e)
 
 
+def _collect_splat_nodes(scene, group_node) -> list:
+    """Collect all splat-bearing descendant nodes of group_node.
+    node.children returns int IDs; scene.get_node() only accepts str names,
+    so we build an id->node lookup from scene.get_visible_nodes() first.
+    """
+    # Build a complete id->node map from all visible nodes
+    id_map = {n.id: n for n in scene.get_visible_nodes()}
+    lf.log.info(f"EDIT bake_group: id_map has {len(id_map)} entries, "
+                f"group id={group_node.id}, children={getattr(group_node, 'children', None)}")
+
+    results = []
+
+    def _walk(node):
+        if node is None:
+            return
+        if node.splat_data() is not None and node.id != group_node.id:
+            results.append(node)
+        for child_id in (getattr(node, "children", None) or []):
+            child = id_map.get(child_id)
+            lf.log.info(f"EDIT bake_group: child_id={child_id} -> "
+                        f"{child.name if child else 'NOT FOUND'}")
+            _walk(child)
+
+    _walk(group_node)
+    return results
+
+
+def _bake_group(group_name: str) -> tuple[int, list[str]]:
+    """Bake world transforms of all splat nodes inside a group into their
+    Gaussian data, then reset every node transform (including the group) to
+    identity.  Returns (baked_count, error_list).
+    """
+    s     = lf.get_scene()
+    group = s.get_node(group_name)
+    if group is None:
+        return 0, [f"Node '{group_name}' not found."]
+
+    lf.log.info(f"EDIT bake_group: group='{group_name}' id={group.id} "
+                f"has_splat={group.splat_data() is not None}")
+
+    splat_nodes = _collect_splat_nodes(s, group)
+    lf.log.info(f"EDIT bake_group: {len(splat_nodes)} splat node(s) to bake: "
+                f"{[n.name for n in splat_nodes]}")
+
+    if not splat_nodes:
+        return 0, [f"No splat nodes found inside '{group_name}'."]
+
+    errors = []
+    baked  = 0
+    for node in splat_nodes:
+        lf.log.info(f"EDIT bake_group: baking '{node.name}'")
+        err = _bake(node.name)
+        if err:
+            errors.append(f"{node.name}: {err}")
+        else:
+            baked += 1
+
+    # Reset the group's own local transform to identity
+    lf.set_node_transform(group_name, [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])
+
+    s.invalidate_cache()
+    s.notify_changed()
+    return baked, errors
+
+
 # ── Panel ─────────────────────────────────────────────────────────────────────
 
 _T_STEP = 0.1
@@ -304,6 +369,7 @@ class TransformPanel(lf.ui.Panel):
         model.bind_event("num_step",           self._on_num_step)
         model.bind_event("do_reload_settings", self._on_reload_settings)
         model.bind_event("do_open_log",        self._on_open_log)
+        model.bind_event("do_open_settings",   self._on_open_settings)
 
         self._handle = model.get_handle()
         self._sync_from_scene()
@@ -332,26 +398,38 @@ class TransformPanel(lf.ui.Panel):
         self._status = "Settings reloaded from settings.json."
         self._dirty_all()
 
+    def _open_in_editor(self, path: Path) -> str:
+        """Open *path* in Notepad++ or fall back to Notepad. Returns a status string."""
+        npp_candidates = [
+            r"C:\Program Files\Notepad++\notepad++.exe",
+            r"C:\Program Files (x86)\Notepad++\notepad++.exe",
+        ]
+        npp = next((p for p in npp_candidates if Path(p).exists()), None)
+        if npp:
+            subprocess.Popen([npp, str(path)])
+            return f"Opened {path.name} in Notepad++."
+        else:
+            subprocess.Popen(["notepad.exe", str(path)])
+            return f"Notepad++ not found — opened {path.name} in Notepad."
+
     def _on_open_log(self, handle, event, args):
         log_path = self._log_path()
         try:
-            # Ensure the file exists before trying to open it
             if not log_path.exists():
                 log_path.write_text("[]", encoding="utf-8")
-            # Try Notepad++ first; fall back to the system default text editor
-            npp_candidates = [
-                r"C:\Program Files\Notepad++\notepad++.exe",
-                r"C:\Program Files (x86)\Notepad++\notepad++.exe",
-            ]
-            npp = next((p for p in npp_candidates if Path(p).exists()), None)
-            if npp:
-                subprocess.Popen([npp, str(log_path)])
-                self._status = "Opened session_log.json in Notepad++."
-            else:
-                subprocess.Popen(["notepad.exe", str(log_path)])
-                self._status = "Notepad++ not found — opened in Notepad."
+            self._status = self._open_in_editor(log_path)
         except Exception as e:
             self._status = f"Could not open log: {e}"
+        self._dirty("status_text", "status_class")
+
+    def _on_open_settings(self, handle, event, args):
+        settings_path = self._settings_path()
+        try:
+            if not settings_path.exists():
+                self._save_settings()
+            self._status = self._open_in_editor(settings_path)
+        except Exception as e:
+            self._status = f"Could not open settings: {e}"
         self._dirty("status_text", "status_class")
 
     def _on_grab(self, handle, event, args):
@@ -381,12 +459,32 @@ class TransformPanel(lf.ui.Panel):
     def _on_bake(self, handle, event, args):
         self._apply_to_scene()
         self._log_transform("bake")
-        err = _bake(self._node_name)
-        if err:
-            self._status = f"Bake failed: {err}"
-        else:
-            self._status = "Baked — transform reset to identity."
+        node = lf.get_scene().get_node(self._node_name) if lf.has_scene() else None
+        if node is None:
+            self._status = "Bake failed: node not found."
+            self._dirty_all()
+            return
+
+        is_group = node.splat_data() is None  # group nodes carry no splat data themselves
+
+        if is_group:
+            baked, errors = _bake_group(self._node_name)
+            if errors and baked == 0:
+                self._status = f"Bake failed: {errors[0]}"
+            elif errors:
+                self._status = (f"Baked {baked} node(s); {len(errors)} error(s): "
+                                f"{errors[0]}")
+            else:
+                self._status = (f"Baked {baked} node(s) in group "
+                                f"'{self._node_name}' — transforms reset to identity.")
             self._sync_from_scene()
+        else:
+            err = _bake(self._node_name)
+            if err:
+                self._status = f"Bake failed: {err}"
+            else:
+                self._status = "Baked — transform reset to identity."
+                self._sync_from_scene()
         self._dirty_all()
 
     def _on_merge(self, handle, event, args):
