@@ -32,7 +32,7 @@ def _mat_from_trs(tx, ty, tz, rx, ry, rz, sx, sy, sz):
     # In +Y-up mode, Y/Z translation and X/Z rotation are stored with the
     # opposite sign in the scene compared to what the user enters in the panel.
     if Y_UP:
-        ty, tz, rz = -ty, -tz, -rz
+        ty, tz = -ty, -tz
     rx_r = math.radians(rx); ry_r = math.radians(ry); rz_r = math.radians(rz)
     cx, sx_ = math.cos(rx_r), math.sin(rx_r)
     cy, sy_ = math.cos(ry_r), math.sin(ry_r)
@@ -71,7 +71,7 @@ def _decompose_mat(wt):
     rz_ = math.degrees(rz)
     # Undo the +Y-up sign flip so the panel always shows user-space values.
     if Y_UP:
-        ty_, tz_, rz_ = -ty_, -tz_, -rz_
+        ty_, tz_ = -ty_, -tz_
     return (tx_, ty_, tz_, rx_, ry_, rz_, float(sx), float(sy), float(sz))
 
 
