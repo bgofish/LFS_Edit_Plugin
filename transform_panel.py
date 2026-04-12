@@ -341,13 +341,13 @@ class TransformPanel(lf.ui.Panel):
 
         # Rotation
         model.bind("rx_str",
-                   lambda: f"{self._rx:.1f}",
+                   lambda: f"{self._rx:.3f}",
                    lambda v: self._set_trs("rx", v, self._r_min, self._r_max))
         model.bind("ry_str",
-                   lambda: f"{self._ry:.1f}",
+                   lambda: f"{self._ry:.3f}",
                    lambda v: self._set_trs("ry", v, self._r_min, self._r_max))
         model.bind("rz_str",
-                   lambda: f"{self._rz:.1f}",
+                   lambda: f"{self._rz:.3f}",
                    lambda v: self._set_trs("rz", v, self._r_min, self._r_max))
 
         # Scale
