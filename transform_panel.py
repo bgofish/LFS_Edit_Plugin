@@ -12,10 +12,27 @@ from pathlib import Path
 import numpy as np
 import lichtfeld as lf
 
+# ── Version detection ─────────────────────────────────────────────────────────
+# v0.5.0.x uses -Y-up;  v0.5.1+ uses +Y-up.
+# In +Y-up mode the Y and Z translation axes and the X and Z rotation axes are
+# reversed relative to what the scene expects, so we flip their signs on the
+# way in (_mat_from_trs) and on the way out (_decompose_mat).
+def _parse_version(v: str) -> tuple:
+    import re
+    parts = v.lstrip("v").split(".")[:3]
+    return tuple(int(re.match(r"\d+", x).group()) for x in parts)
+
+_LFS_VER = _parse_version(lf.__version__)
+Y_UP = _LFS_VER >= (0, 5, 1)   # True → +Y-up  /  False → -Y-up
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _mat_from_trs(tx, ty, tz, rx, ry, rz, sx, sy, sz):
+    # In +Y-up mode, Y/Z translation and X/Z rotation are stored with the
+    # opposite sign in the scene compared to what the user enters in the panel.
+    if Y_UP:
+        ty, tz, rz = -ty, -tz, -rz
     rx_r = math.radians(rx); ry_r = math.radians(ry); rz_r = math.radians(rz)
     cx, sx_ = math.cos(rx_r), math.sin(rx_r)
     cy, sy_ = math.cos(ry_r), math.sin(ry_r)
@@ -48,9 +65,14 @@ def _decompose_mat(wt):
         ry = math.pi/2 if R[2, 0] < 0 else -math.pi/2
         rx = math.atan2(-R[1, 2], R[1, 1])
         rz = 0.0
-    return (float(t[0]), float(t[1]), float(t[2]),
-            math.degrees(rx), math.degrees(ry), math.degrees(rz),
-            float(sx), float(sy), float(sz))
+    tx_, ty_, tz_ = float(t[0]), float(t[1]), float(t[2])
+    rx_ = math.degrees(rx)
+    ry_ = math.degrees(ry)
+    rz_ = math.degrees(rz)
+    # Undo the +Y-up sign flip so the panel always shows user-space values.
+    if Y_UP:
+        ty_, tz_, rz_ = -ty_, -tz_, -rz_
+    return (tx_, ty_, tz_, rx_, ry_, rz_, float(sx), float(sy), float(sz))
 
 
 def _mat_to_quat(R):
