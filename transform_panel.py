@@ -244,7 +244,7 @@ def _bake_group(group_name: str) -> tuple[int, list[str]]:
 
 _T_STEP = 0.1
 _R_STEP = 1.0
-_S_STEP = 0.01
+#_S_STEP = 0.01
 
 
 class TransformPanel(lf.ui.Panel):
@@ -280,7 +280,7 @@ class TransformPanel(lf.ui.Panel):
         self._s_max  =  5.0
         self._t_step =  0.1
         self._r_step =  1.0
-        self._s_step =  0.01
+        self._s_step =  0.1
 
         self._load_settings()
 
@@ -389,9 +389,11 @@ class TransformPanel(lf.ui.Panel):
         model.bind_event("do_create_folder",   self._on_create_folder)
         model.bind_event("do_move",            self._on_move)
         model.bind_event("num_step",           self._on_num_step)
-        model.bind_event("do_reload_settings", self._on_reload_settings)
-        model.bind_event("do_open_log",        self._on_open_log)
-        model.bind_event("do_open_settings",   self._on_open_settings)
+        model.bind_event("do_reload_settings",  self._on_reload_settings)
+        model.bind_event("do_open_log",         self._on_open_log)
+        model.bind_event("do_open_settings",    self._on_open_settings)
+        model.bind_event("do_recenter_xyz",     self._on_recenter_xyz)
+        model.bind_event("do_recenter_xz_0y",  self._on_recenter_xz_0y)
 
         self._handle = model.get_handle()
         self._sync_from_scene()
@@ -453,6 +455,65 @@ class TransformPanel(lf.ui.Panel):
         except Exception as e:
             self._status = f"Could not open settings: {e}"
         self._dirty("status_text", "status_class")
+
+
+    def _on_recenter_xz_0y(self, handle, event, args):
+        scene = lf.get_scene()
+        nodes = scene.get_visible_nodes()
+        node = nodes[0]
+
+        mn, mx = scene.get_node_bounds(node.name)
+        mn = np.array(mn)
+        mx = np.array(mx)
+
+        centre_x = (mn[0] + mx[0]) / 2
+        centre_z = (mn[2] + mx[2]) / 2
+        # + mx[2]) / 2
+        floor_y  = mx[1] 
+        # print(f"translating by: x={-centre_x:.4f}  y={-floor_y:.4f}  z={-centre_z:.4f}")
+        transform = np.eye(4, dtype=np.float32)
+        transform[0, 3] = -centre_x
+        transform[1, 3] = -floor_y
+        transform[2, 3] = -centre_z
+
+        scene.set_node_transform(node.name, transform)
+        #print("done — model floored at Y=0, centred on X and Z")
+        mn2, mx2 = scene.get_node_bounds(node.name)
+        mn2 = np.array(mn2)
+        mx2 = np.array(mx2)
+                
+        self._sync_from_scene()
+        self._log_transform("grab")
+        self._dirty_all()
+
+    def _on_recenter_xyz(self, handle, event, args):
+        scene = lf.get_scene()
+        nodes = scene.get_visible_nodes()
+        node = nodes[0]
+
+        mn, mx = scene.get_node_bounds(node.name)
+        mn = np.array(mn)
+        mx = np.array(mx)
+        centroid = (mn + mx) / 2
+        # print(f"bounds centre: {centroid}")
+        # print(f"will translate by: {-centroid}")
+        # Build 4x4 translation matrix to move centroid to origin
+
+        transform = np.eye(4, dtype=np.float32)
+        transform[0, 3] = -centroid[0]
+        transform[1, 3] = -centroid[1]
+        transform[2, 3] = -centroid[2]
+        scene.set_node_transform(node.name, transform)
+        # print("done — centroid moved to 0,0,0")
+        # Verify
+        mn2, mx2 = scene.get_node_bounds(node.name)
+        mn2 = np.array(mn2)
+        mx2 = np.array(mx2)   
+
+        self._sync_from_scene()
+        self._log_transform("grab")
+        self._dirty_all()        
+            
 
     def _on_grab(self, handle, event, args):
         self._sync_from_scene()

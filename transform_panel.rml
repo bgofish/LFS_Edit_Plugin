@@ -61,6 +61,8 @@
 
     <div class="separator"></div>
 
+
+
     <!-- Rotation -->
     <span class="section-label" style="color: #4A90D9;">Rotation (°)</span>
 
@@ -137,10 +139,20 @@
               title="Permanently fold the current transform into the raw Gaussian data, then reset to identity. If a group is selected, all splat nodes inside it are baked. This cannot be undone — save a backup first.">Bake Transform</button>
     </div>
     <span class="text-muted">Permanently writes transform into Gaussian data.</span><br/>
-    <span class="text-muted">Save a backup before baking.</span>
+    <span class="text-muted">[*Save a backup before baking*]</span>
 
     <div class="separator"></div>
+    <!-- Actions -->
+    <span class="section-label" style="color: #4A90D9;">Actions</span>
+    <div class="btn-row">
+      <button class="btn" data-event-click="do_recenter_xyz"
+              title="Translationation: bounding-box centroid">ReCent XYZ</button>
+      <button class="btn" data-event-click="do_recenter_xz_0y"
+              title="Translationation: centred on X/Z and its Lower face sits at Y=0">ReCent XZ-0Y</button>
+    </div>
+    <span class="text-muted">Prefills Txyz [Model] to centre (XYZ) or XZ-Y0 (floor) </span>
 
+    <div class="separator"></div>
     <!-- Merge Visible Nodes -->
     <span class="section-label" style="color: #4A90D9;">Merge Visible Nodes</span>
     <div class="setting-row">
