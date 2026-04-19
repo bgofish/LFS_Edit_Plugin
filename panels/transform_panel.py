@@ -346,7 +346,7 @@ def _on_align_point_picked(world_pos, point_num: int):
 
 _T_STEP = 0.1
 _R_STEP = 1.0
-_S_STEP = 0.01
+_S_STEP = 1.0
 
 
 class TransformPanel(lf.ui.Panel):
@@ -383,13 +383,14 @@ class TransformPanel(lf.ui.Panel):
         self._status         = ""
         self._last_node_name = None   # dirty-detection
         self._last_logged    = None   # dedup: last transform written to session log
+        self._scene_synced   = False  # guard: block _apply_to_scene until first sync
 
         # Slider limits — defaults; overridden by settings.json if present
         self._t_min  = -50.0
         self._t_max  =  50.0
         self._r_min  = -180.0
         self._r_max  =  180.0
-        self._s_min  =  0.1
+        self._s_min  =  0.01
         self._s_max  =  5.0
         self._t_step =  0.1
         self._r_step =  1.0
@@ -397,9 +398,9 @@ class TransformPanel(lf.ui.Panel):
         # Sensitivity step ladder — shared across all transform groups
         self._t_step_idx = _STEP_LEVELS.index(0.1)   if 0.1  in _STEP_LEVELS else 7
         self._r_step_idx = _STEP_LEVELS.index(1.0)   if 1.0  in _STEP_LEVELS else 9
-        self._s_step_idx = _STEP_LEVELS.index(1.0)   if 0.01  in _STEP_LEVELS else 4
-        self._on_reset
-        #self._load_settings()
+        self._s_step_idx = _STEP_LEVELS.index(1.0)   if 1.0  in _STEP_LEVELS else 9
+
+        self._load_settings()
 
     @classmethod
     def poll(cls, context) -> bool:
@@ -572,6 +573,7 @@ class TransformPanel(lf.ui.Panel):
     def on_unmount(self, doc):
         doc.remove_data_model("transform_panel")
         self._handle = None
+        self._scene_synced = False
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
@@ -581,7 +583,6 @@ class TransformPanel(lf.ui.Panel):
 
     def _on_reload_settings(self, handle, event, args):
         self._load_settings()
-        self._sx = self._sy = self._sz = 1.0
         self._status = "Settings reloaded from settings.json."
         self._dirty_all()
 
@@ -859,6 +860,8 @@ class TransformPanel(lf.ui.Panel):
         self._save_settings()
 
     def _set_trs(self, attr: str, value, lo: float, hi: float):
+        if not self._scene_synced:
+            return  # block slider init firing before scene has been read
         try:
             v = max(lo, min(hi, float(value)))
         except (TypeError, ValueError):
@@ -890,7 +893,10 @@ class TransformPanel(lf.ui.Panel):
             self._node_name = name
             (self._tx, self._ty, self._tz,
              self._rx, self._ry, self._rz,
-             self._sx, self._sy, self._sz) = _decompose_mat(node.world_transform)
+             _, _, _) = _decompose_mat(node.world_transform)
+            # Scale always starts at 1,1,1 on load regardless of scene state
+            self._sx = self._sy = self._sz = 1.0
+            self._scene_synced = True
             lf.log.info(f"EDIT synced: t=({self._tx:.3f},{self._ty:.3f},{self._tz:.3f}) "
                         f"r=({self._rx:.1f},{self._ry:.1f},{self._rz:.1f}) "
                         f"s=({self._sx:.3f},{self._sy:.3f},{self._sz:.3f})")
@@ -898,7 +904,7 @@ class TransformPanel(lf.ui.Panel):
             self._status = f"Sync error: {e}"
 
     def _apply_to_scene(self):
-        if not self._node_name:
+        if not self._node_name or not self._scene_synced:
             return
         try:
             mat = _mat_from_trs(self._tx, self._ty, self._tz,
@@ -1072,9 +1078,17 @@ class TransformPanel(lf.ui.Panel):
         try:
             data = json.loads(self._settings_path().read_text(encoding="utf-8"))
             t = data.get("transform", {})
-            # tx/ty/tz, rx/ry/rz, sx/sy/sz are NOT restored from settings —
-            # they always come from _sync_from_scene() so the panel always
-            # reflects the actual scene state after reload.
+            self._tx            = float(t.get("tx",            self._tx))
+            self._ty            = float(t.get("ty",            self._ty))
+            self._tz            = float(t.get("tz",            self._tz))
+            self._rx            = float(t.get("rx",            self._rx))
+            self._ry            = float(t.get("ry",            self._ry))
+            self._rz            = float(t.get("rz",            self._rz))
+            # Scale is always reset to 1,1,1 on reload — scene values come
+            # from _sync_from_scene() once the panel mounts.
+            self._sx = 1.0
+            self._sy = 1.0
+            self._sz = 1.0
             # Booleans: use explicit `is True` comparison to correctly read
             # JSON false (Python False) rather than truthy/falsy coercion.
             us = t.get("uniform_scale", self._uniform_scale)
@@ -1093,9 +1107,18 @@ class TransformPanel(lf.ui.Panel):
             self._r_max  = float(lim.get("rotation_max",     self._r_max))
             self._s_min  = float(lim.get("scale_min",        self._s_min))
             self._s_max  = float(lim.get("scale_max",        self._s_max))
+            # Ensure s_min aligns with s_step to prevent slider snap corruption.
+            # Slider values snap to min + n*step, so if min=0.1 and step=1.0
+            # the nearest snap to 1.0 is 1.1, not 1.0. Fix by rounding min
+            # down to the nearest step multiple.
+            if self._s_step > 0:
+                import math as _math
+                self._s_min = _math.floor(self._s_min / self._s_step) * self._s_step
             self._t_step = float(lim.get("translation_step", self._t_step))
             self._r_step = float(lim.get("rotation_step",    self._r_step))
-            self._s_step = float(lim.get("scale_step",       self._s_step))
+            saved_s_step = float(lim.get("scale_step", self._s_step))
+            # If settings.json has a stale sub-1.0 scale step, reset to 1.0
+            self._s_step = saved_s_step if saved_s_step >= 1.0 else 1.0
             # Restore step indices to match loaded step values
             self._t_step_idx = min(range(len(_STEP_LEVELS)), key=lambda i: abs(_STEP_LEVELS[i] - self._t_step))
             self._r_step_idx = min(range(len(_STEP_LEVELS)), key=lambda i: abs(_STEP_LEVELS[i] - self._r_step))
@@ -1114,6 +1137,15 @@ class TransformPanel(lf.ui.Panel):
             except Exception:
                 data = {}
             data["transform"] = {
+                "tx":            round(self._tx, 4),
+                "ty":            round(self._ty, 4),
+                "tz":            round(self._tz, 4),
+                "rx":            round(self._rx, 4),
+                "ry":            round(self._ry, 4),
+                "rz":            round(self._rz, 4),
+                "sx":            round(self._sx, 4),
+                "sy":            round(self._sy, 4),
+                "sz":            round(self._sz, 4),
                 "uniform_scale": self._uniform_scale,
                 "live":          self._live,
                 "merge_name":    self._merge_name,
