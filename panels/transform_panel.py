@@ -554,6 +554,18 @@ class TransformPanel(lf.ui.Panel):
 
         self._handle = model.get_handle()
         self._sync_from_scene()
+        # Fire reset x3 to ensure scale sliders settle at 1,1,1
+        self._uniform_scale = False  
+        self._do_scale_reset()       
+        self._do_scale_reset()
+        self._do_scale_reset()     
+        self._uniform_scale = True
+        self._uniform_scale = False  
+        self._do_scale_reset()       
+        self._do_scale_reset()
+        self._do_scale_reset()     
+        self._uniform_scale = True
+
 
     def on_update(self, doc):
         changed = self._process_align_picks()
@@ -695,6 +707,13 @@ class TransformPanel(lf.ui.Panel):
         # Also persist to settings
         self._save_settings()
         self._dirty(f"{group}_step", f"{group}_step_label")
+
+    def _do_scale_reset(self):
+        """Force scale to 1,1,1 and update the scene if live."""
+        self._sx = self._sy = self._sz = 1.0
+        if self._live and self._node_name and self._scene_synced:
+            self._apply_to_scene()
+        self._dirty("sx_str", "sy_str", "sz_str")
 
     def _on_grab(self, handle, event, args):
         self._sync_from_scene()
@@ -860,8 +879,6 @@ class TransformPanel(lf.ui.Panel):
         self._save_settings()
 
     def _set_trs(self, attr: str, value, lo: float, hi: float):
-        if not self._scene_synced:
-            return  # block slider init firing before scene has been read
         try:
             v = max(lo, min(hi, float(value)))
         except (TypeError, ValueError):
@@ -1084,11 +1101,9 @@ class TransformPanel(lf.ui.Panel):
             self._rx            = float(t.get("rx",            self._rx))
             self._ry            = float(t.get("ry",            self._ry))
             self._rz            = float(t.get("rz",            self._rz))
-            # Scale is always reset to 1,1,1 on reload — scene values come
-            # from _sync_from_scene() once the panel mounts.
-            self._sx = 1.0
-            self._sy = 1.0
-            self._sz = 1.0
+            self._sx = float(t.get("sx", self._sx))
+            self._sy = float(t.get("sy", self._sy))
+            self._sz = float(t.get("sz", self._sz))
             # Booleans: use explicit `is True` comparison to correctly read
             # JSON false (Python False) rather than truthy/falsy coercion.
             us = t.get("uniform_scale", self._uniform_scale)
@@ -1107,13 +1122,6 @@ class TransformPanel(lf.ui.Panel):
             self._r_max  = float(lim.get("rotation_max",     self._r_max))
             self._s_min  = float(lim.get("scale_min",        self._s_min))
             self._s_max  = float(lim.get("scale_max",        self._s_max))
-            # Ensure s_min aligns with s_step to prevent slider snap corruption.
-            # Slider values snap to min + n*step, so if min=0.1 and step=1.0
-            # the nearest snap to 1.0 is 1.1, not 1.0. Fix by rounding min
-            # down to the nearest step multiple.
-            if self._s_step > 0:
-                import math as _math
-                self._s_min = _math.floor(self._s_min / self._s_step) * self._s_step
             self._t_step = float(lim.get("translation_step", self._t_step))
             self._r_step = float(lim.get("rotation_step",    self._r_step))
             saved_s_step = float(lim.get("scale_step", self._s_step))
