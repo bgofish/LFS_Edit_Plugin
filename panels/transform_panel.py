@@ -730,10 +730,16 @@ class TransformPanel(lf.ui.Panel):
         self._uniform_scale = False 
         self._tx = self._ty = self._tz = 0.0
         self._rx = self._ry = self._rz = 0.0
+        # x3 to try & solve sticky issue
+        self._sx = self._sy = self._sz = 1.0
+        self._apply_to_scene()
+        self._sx = self._sy = self._sz = 1.0
+        self._apply_to_scene()
         self._sx = self._sy = self._sz = 1.0
         self._apply_to_scene()
         self._uniform_scale = True
-        self._log_transform("reset")
+        
+        self._log_transform("Input.Reset")
         self._status = "Reset to identity."
         self._save_settings()
         self._dirty("tx_str", "ty_str", "tz_str",
