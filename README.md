@@ -263,12 +263,9 @@ Each entry records:
 ## Changelog
 
 ### 0.2.6
-- Fixed alignment point-picker — now uses correct LFS modal operator pattern (no `modal_handler_add`; `invoke` returns `RUNNING_MODAL` directly)
-- Fixed operator ID resolution using Python's `__name__` — works correctly regardless of what the plugin folder is named
 - Added collapsible ▶ / ▼ Align section
 - Added per-section sensitivity step ladder for Translation, Rotation, and Scale (19 levels: 0.001 → 1000)
 - Added auto-expand of translation limits on ReCent operations — values are never silently clipped
-- Viewport overlay (pick point markers, connecting line, axis labels) now correctly tracks the camera during pan, zoom, and orbit
 
 ---
 
