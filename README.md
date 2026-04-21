@@ -10,7 +10,7 @@ A comprehensive transform editing panel for Gaussian Splat nodes in Lichtfeld St
 
 ## Installation
 
-1. Paste address https://github.com/bgofish/LFS_Edit_Plugin  into the PLugin MarketPlace
+1. Paste address https://github.com/bgofish/LFS_Edit_Plugin  into the Plugin MarketPlace
 
 2. The **Edit** tab will appear in the main panel sidebar (Left of Rendering)
 
@@ -19,6 +19,7 @@ A comprehensive transform editing panel for Gaussian Splat nodes in Lichtfeld St
 ## Panel Overview
 
 The panel only activates when a splat node is selected in the scene. It is divided into the following sections:
+<img width="500" height="600" alt="image" src="https://github.com/user-attachments/assets/9d9187fb-a5d2-4e09-959c-f0c29b33ee2a" />
 
 ---
 
