@@ -1,145 +1,156 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Modal point-picker operator for the Align plugin (embedded in LFS_Edit_Plugin)."""
+"""Hover-based point capture for the Align plugin.
+
+No modal operator needed. The panel polls get_hovered_gaussian_id() each
+update tick and stores the result when the user presses the capture button.
+"""
 
 import lichtfeld as lf
 import lichtfeld.selection as sel
-from lfs_plugins.types import Operator, Event
 
-# Module-level callback state
-_pick_callback  = None
-_pick_point_num = 0
-_pick_cancelled = False
+# ── State ─────────────────────────────────────────────────────────────────────
+_capture_callback  = None
+_capture_point_num = 0
+_capture_cancelled = False
 
-# How many MOUSEMOVE events to wait after a LEFTMOUSE PRESS before retrying
-# a failed pick — gives the render pipeline time to resolve depth.
-_PICK_RETRY_TICKS = 3
-_pending_pick_xy  = None   # (x, y) waiting for retry, or None
-_pending_ticks    = 0
+# Last known hovered gaussian world position (updated every tick while active)
+_hovered_world_pos = None
+_hovered_gid       = -1
 
 
-def set_pick_callback(callback, point_num: int):
-    global _pick_callback, _pick_point_num, _pick_cancelled
-    global _pending_pick_xy, _pending_ticks
-    _pick_callback   = callback
-    _pick_point_num  = point_num
-    _pick_cancelled  = False
-    _pending_pick_xy = None
-    _pending_ticks   = 0
+def set_capture_callback(callback, point_num: int):
+    global _capture_callback, _capture_point_num, _capture_cancelled
+    _capture_callback  = callback
+    _capture_point_num = point_num
+    _capture_cancelled = False
+    lf.log.info(f"PICK_DBG set_capture_callback: point_num={point_num}")
 
 
-def clear_pick_callback():
-    global _pick_callback, _pick_point_num, _pick_cancelled
-    global _pending_pick_xy, _pending_ticks
-    _pick_callback   = None
-    _pick_point_num  = 0
-    _pick_cancelled  = True
-    _pending_pick_xy = None
-    _pending_ticks   = 0
+def clear_capture_callback():
+    global _capture_callback, _capture_point_num, _capture_cancelled
+    global _hovered_world_pos, _hovered_gid
+    lf.log.info("PICK_DBG clear_capture_callback")
+    _capture_callback  = None
+    _capture_point_num = 0
+    _capture_cancelled = True
+    _hovered_world_pos = None
+    _hovered_gid       = -1
 
 
-def was_pick_cancelled() -> bool:
-    global _pick_cancelled
-    if _pick_cancelled:
-        _pick_cancelled = False
+def was_capture_cancelled() -> bool:
+    global _capture_cancelled
+    if _capture_cancelled:
+        _capture_cancelled = False
         return True
     return False
 
 
-def _try_pick(x: float, y: float) -> bool:
-    """Attempt a depth pick at (x, y).  Returns True and fires the callback on
-    a hit, False on a miss (caller should retry)."""
-    global _pick_callback, _pick_point_num
-    if _pick_callback is None:
-        return True  # callback was cleared externally — treat as done
+# Max pixel distance to accept a nearest-Gaussian hit
+_MAX_PICK_DIST_PX = 50.0
+
+def poll_hover() -> bool:
+    """Find the Gaussian nearest the mouse cursor using screen positions.
+    Updates _hovered_world_pos. Returns True if within _MAX_PICK_DIST_PX.
+    """
+    global _hovered_world_pos, _hovered_gid
+
+    if _capture_callback is None:
+        return False
+
+    import numpy as np
+
+    # ── Get mouse position ────────────────────────────────────────────────────
     try:
-        result = sel.pick_at_screen(x, y)
+        mouse = lf.ui.get_mouse_screen_pos()
+        mx, my = float(mouse[0]), float(mouse[1])
     except Exception as exc:
-        lf.log.warning(f"EDIT Align pick_at_screen raised: {exc}")
+        lf.log.warning(f"PICK_DBG poll_hover: get_mouse_screen_pos failed: {exc}")
         return False
-    if result is None:
+
+    # ── Get all Gaussian screen positions ─────────────────────────────────────
+    try:
+        if not sel.has_screen_positions():
+            _hovered_world_pos = None
+            return False
+        sp = sel.get_screen_positions().cpu().numpy()  # (N, 2) float32
+    except Exception as exc:
+        lf.log.warning(f"PICK_DBG poll_hover: get_screen_positions failed: {exc}")
         return False
-    _pick_callback(result.world_position, _pick_point_num)
-    clear_pick_callback()
+
+    # ── Find nearest Gaussian ─────────────────────────────────────────────────
+    dx    = sp[:, 0] - mx
+    dy    = sp[:, 1] - my
+    dist2 = dx*dx + dy*dy
+    gid   = int(np.argmin(dist2))
+    dist  = float(np.sqrt(dist2[gid]))
+
+    if dist > _MAX_PICK_DIST_PX:
+        _hovered_gid       = -1
+        _hovered_world_pos = None
+        return False
+
+    if gid == _hovered_gid:
+        return _hovered_world_pos is not None  # cached, no work needed
+
+    # ── Map global index → node + world position ──────────────────────────────
+    scene = lf.get_scene()
+    if scene is None:
+        return False
+
+    offset = 0
+    found_node = None
+    local_idx  = -1
+    for n in scene.get_visible_nodes():
+        sd = n.splat_data()
+        if sd is None:
+            continue
+        count = sd.num_points
+        if offset <= gid < offset + count:
+            found_node = n
+            local_idx  = gid - offset
+            break
+        offset += count
+
+    if found_node is None:
+        return False
+
+    try:
+        means     = found_node.splat_data().get_means().cpu().numpy()
+        local_pos = means[local_idx].astype(np.float64)
+        wt = found_node.world_transform
+        M  = np.array([[wt[r][c] for c in range(4)] for r in range(4)],
+                      dtype=np.float64)
+        world_pos = (M[:3, :3] @ local_pos + M[:3, 3]).tolist()
+        _hovered_gid       = gid
+        _hovered_world_pos = world_pos
+        lf.log.info(f"PICK_DBG poll_hover: gid={gid} dist={dist:.1f}px "
+                    f"node='{found_node.name}' world={[f'{v:.4f}' for v in world_pos]}")
+        return True
+    except Exception as exc:
+        lf.log.warning(f"PICK_DBG poll_hover: world-pos lookup failed: {exc}")
+        return False
+
+
+def capture_hovered_point() -> bool:
+    """Called when the user clicks Capture. Fires the callback with the
+    last known hovered world position. Returns True on success."""
+    global _hovered_world_pos
+
+    if _capture_callback is None:
+        lf.log.info("PICK_DBG capture_hovered_point: no callback set")
+        return False
+
+    if _hovered_world_pos is None:
+        lf.log.info("PICK_DBG capture_hovered_point: no hovered position available")
+        return False
+
+    lf.log.info(f"PICK_DBG capture_hovered_point: capturing "
+                f"point_num={_capture_point_num}  pos={_hovered_world_pos}")
+    _capture_callback(_hovered_world_pos, _capture_point_num)
+    clear_capture_callback()
     return True
 
 
-class ALIGN_OT_pick_point(Operator):
-    """Modal operator: click on the viewport to pick a world-space point."""
-
-    label       = "Pick Alignment Point"
-    description = "Click on the model to pick a point for alignment"
-    options     = {'BLOCKING'}
-
-    def invoke(self, context, event: Event) -> set:
-        # Register this operator as a modal handler so modal() receives events.
-        # LFS may expose this on context.window_manager (Blender-style) or directly.
-        try:
-            context.window_manager.modal_handler_add(self)
-        except AttributeError:
-            try:
-                context.modal_handler_add(self)
-            except AttributeError:
-                pass  # LFS may auto-register when invoke returns RUNNING_MODAL
-        return {'RUNNING_MODAL'}
-
-    def modal(self, context, event: Event) -> set:
-        global _pending_pick_xy, _pending_ticks
-
-        # ── Camera navigation events: keep overlay redrawn so points track ──
-        if event.type in {'MOUSEMOVE', 'MIDDLEMOUSE', 'WHEELUPMOUSE',
-                          'WHEELDOWNMOUSE', 'NUMPAD_0'}:
-            # Flush a deferred pick if one is waiting
-            if _pending_pick_xy is not None:
-                _pending_ticks -= 1
-                if _pending_ticks <= 0:
-                    px, py = _pending_pick_xy
-                    _pending_pick_xy = None
-                    if _try_pick(px, py):
-                        try:
-                            lf.ui.request_redraw()
-                        except Exception:
-                            pass
-                        return {'FINISHED'}
-                    # Still no hit — give up and let the user click again
-            try:
-                lf.ui.request_redraw()
-            except Exception:
-                pass
-            return {'PASS_THROUGH'}
-
-        # ── Left-click: attempt pick, defer if depth not ready ───────────────
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            x, y = event.mouse_region_x, event.mouse_region_y
-            if _try_pick(x, y):
-                try:
-                    lf.ui.request_redraw()
-                except Exception:
-                    pass
-                return {'FINISHED'}
-            # Depth miss — queue a deferred retry
-            _pending_pick_xy = (x, y)
-            _pending_ticks   = _PICK_RETRY_TICKS
-            lf.log.info("EDIT Align: depth miss on click — deferring pick")
-            return {'RUNNING_MODAL'}
-
-        elif event.type in {'RIGHTMOUSE', 'ESC'}:
-            _pending_pick_xy = None
-            clear_pick_callback()
-            try:
-                lf.ui.request_redraw()
-            except Exception:
-                pass
-            return {'CANCELLED'}
-
-        return {'PASS_THROUGH'}
-
-    def cancel(self, context):
-        global _pending_pick_xy
-        _pending_pick_xy = None
-        clear_pick_callback()
-
-
-# ── Aliases for LFS_Edit_Plugin compatibility ──────────────────────────────────
-set_capture_callback  = set_pick_callback
-clear_capture_callback = clear_pick_callback
-was_capture_cancelled  = was_pick_cancelled
+def get_hovered_pos():
+    """Returns the current hovered world position, or None."""
+    return _hovered_world_pos
