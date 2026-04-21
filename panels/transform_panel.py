@@ -740,7 +740,7 @@ class TransformPanel(lf.ui.Panel):
             # Auto-expand limits if the required values would be clipped
             limit_changes = self._expand_t_limits(raw_tx, raw_ty, raw_tz)
             self._tx = float(np.clip(raw_tx, self._t_min, self._t_max))
-            self._ty = float(np.clip(raw_ty, self._t_min, self._t_max))
+            self._ty = -float(np.clip(raw_ty, self._t_min, self._t_max))
             self._tz = float(np.clip(raw_tz, self._t_min, self._t_max))
             suffix = (f"  (limits expanded: {', '.join(limit_changes)})"
                       if limit_changes else "")
