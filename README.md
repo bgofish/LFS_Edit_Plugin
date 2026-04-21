@@ -93,8 +93,8 @@ A collapsible section for aligning a node's rotation using two picked points on 
 1. **Select an axis** — choose which world axis the vector between your two points should align to (X, Y, or Z). The active axis is shown in brackets e.g. `[Y]`
 2. **Pick Point 1** — click the button, then click directly on the model surface in the viewport. The point is shown as a green dot with an overlay label
 3. **Pick Point 2** — repeat for the second point (shown in orange)
-4. **Calc. Angle** — computes the rotation delta needed to align the vector P1→P2 to the selected axis, and adds those values to the Rotation fields
-5. **Apply** or **Bake** to commit
+4. **Calc. Angle** — computes the rotation delta needed to align the vector P1→P2 about the selected axis resulting in P1->p2 'up the screen', and adds those values to the Rotation fields
+5. **Bake** to commit
 
 | Button | Description |
 |---|---|
@@ -103,7 +103,7 @@ A collapsible section for aligning a node's rotation using two picked points on 
 | **Pick Point 2** / **Repick Pt 2** | Starts viewport picking for point 2 |
 | **Calc. Angle** | Calculates rotation delta and writes to the Rx / Ry / Rz fields |
 
-While picking is active a coloured prompt appears in the viewport. Press **ESC** or right-click to cancel picking. Picked points are shown as coloured dots with a connecting line that persist until a new pick or reset.
+While picking is active a coloured prompt appears in the top left of viewport. Press **ESC** or right-click to cancel picking. Picked points are shown as coloured dots with a connecting line that persist until a new pick or reset.
 
 The calculated rotation components are displayed in colour after calculation: red Rx, green Ry, blue Rz.
 
