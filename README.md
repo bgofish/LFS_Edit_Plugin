@@ -60,7 +60,7 @@ The **Step** control (−/+ buttons beside the section label) walks through a se
 
 Quick-fill helpers that populate the translation fields without applying the transform.
 
-### ReCent XYZ
+### ReCent XYZ - Recentre the Model by its centre of X/Y/Z
 
 Calculates the bounding-box centroid of the selected node and prefills X, Y, Z so that centroid would move to the world origin `(0, 0, 0)`. Rotation and scale are left unchanged.
 
@@ -68,19 +68,19 @@ Calculates the bounding-box centroid of the selected node and prefills X, Y, Z s
 1. Select the node
 2. Click **ReCent XYZ**
 3. Verify the prefilled values in the translation fields
-4. Click **Apply**  only needed if Live was not active then **Bake** to permanently write the change
+4. Click **Apply**  (only needed if Live was not active) then **Bake** to permanently write the change
 4.1. or **Bake** to permanently write the change if Live is active
 
 
-### ReCent XZ-0Y
+### ReCent XZ-0Y - Recentre the Model by its centre of X/Z but uses the lowest Y value as the Y0
 
 Calculates the bounding-box and prefills X, Y, Z so the model is centred on the X and Z axes with its **top face placed at Y = 0** (floor-at-origin convention). Useful for aligning models to a ground plane.
 
 **Workflow:**
 1. Select the node
 2. Click **ReCent XZ-0Y**
-3. Verify the prefilled values
-4. Click **Apply** or **Bake**
+4. Click **Apply**  (only needed if Live was not active) then **Bake** to permanently write the change
+4.1. or **Bake** to permanently write the change if Live is active
 
 > Both recenter operations only prefill the translation fields — they do not apply immediately unless **Live** mode is on.
 
@@ -249,25 +249,6 @@ Each entry records:
 - Node name
 - Full transform values (tx, ty, tz, rx, ry, rz, sx, sy, sz)
 - Uniform scale and Live mode state
-
----
-
-## File Structure
-
-```
-LFS_Edit_Plugin/
-├── __init__.py                  Plugin entry point and class registration
-├── pyproject.toml               Plugin metadata and LFS API requirements
-├── settings.json                User settings (auto-created on first run)
-├── session_log.json             Transform history log (auto-created)
-├── operators/
-│   ├── __init__.py
-│   └── align_picker.py          Modal viewport point-picker operator
-└── panels/
-    ├── __init__.py
-    ├── transform_panel.py        Main panel logic
-    └── transform_panel.rml       Panel UI layout (RmlUI)
-```
 
 ---
 
