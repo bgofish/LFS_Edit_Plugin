@@ -25,8 +25,6 @@ The panel only activates when a splat node is selected in the scene. It is divid
 
 ## Header Controls
 
-These controls appear at the top of the panel whenever a node is selected.
-
 | Control | Description |
 |---|---|
 | **Node: `<name>`** | Displays the currently selected node name |
