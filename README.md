@@ -58,8 +58,6 @@ The **Step** control (−/+ buttons beside the section label) walks through a se
 
 ## Actions
 
-Quick-fill helpers that populate the translation fields without applying the transform.
-
 ### ReCent XYZ - Recentre the Model by its centre of X/Y/Z
 
 Calculates the bounding-box centroid of the selected node and prefills X, Y, Z so that centroid would move to the world origin `(0, 0, 0)`. Rotation and scale are left unchanged.
